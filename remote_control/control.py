@@ -16,7 +16,6 @@ def initialise_and_login(HOST, user, password, fout, fout_r, fout_s):
         child.expect('Connected.')
     except:
         if child.expect("Anmeldung.") == 0:
-            print 'login failed'
             login(child, user, password)
     return child
 
@@ -33,10 +32,10 @@ def acquirePixel(child, xyz, image_bounds=None, dummy=False):
     if image_bounds:
         x, y = xyz[0], xyz[1]
         if not all([image_bounds[0][0] > x > image_bounds[1][0], image_bounds[0][1] < y < image_bounds[1][1]]):
-            print x, y, [image_bounds[0][0] > x > image_bounds[1][0], image_bounds[0][1] < y < image_bounds[1][1]]
+            print(x, y, [image_bounds[0][0] > x > image_bounds[1][0], image_bounds[0][1] < y < image_bounds[1][1]])
             raise IOError('Pixel out of bounding box {}'.format(image_bounds))
     if dummy:
-        print gotostr(xyz)
+        print(gotostr(xyz))
         return 0
     child.sendline(gotostr(xyz))
     child.expect("OK")
@@ -74,8 +73,6 @@ def ping(child):
     child.sendline('Meas')
     child.sendline('End')
     child.close()
-
-
 
 
 def runner(config):
