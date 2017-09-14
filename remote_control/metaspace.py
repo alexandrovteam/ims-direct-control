@@ -4,12 +4,15 @@ import pandas as pd
 import os
 import numpy as np
 import remote_control.control as rc
+import datetime
+import json
 
 class Experiment():
-    def __init__(self, ds_id, fdr=0.1, database='HMDB', config=None):
+    def __init__(self, ds_id, fdr=0.1, database='HMDB', config=None, datadir = "."):
         self.connect_metaspace(config)
         self.init_dataset(ds_id)
         self.get_annotations(fdr, database)
+        self.datadir = datadir
 
 
     def connect_metaspace(self, config):
@@ -37,18 +40,23 @@ class Experiment():
             self.precursors.append(ims.peak(0))
 
     def generate_targets(self, pertarget= 20):
-        print("{} targets will be generated".format(pertarget*len(self.images)))
+        import numpy as np
+        import scipy.ndimage as ndimage
+        print("{} targets will be generated".format(pertarget * len(self.images)))
         self.targets = []
-        mask = np.ones(self.images[0].shape, dtype=float)
+        mask = np.zeros(self.images[0].shape, dtype=float)
+        sigma = 3
         for ii in range(pertarget):
-            for ix in np.random.permutation(range(0, len(self.images))):
-                im, mz, an = self.images[ix], self.precursors[ix], self.annotations[ix]
-                mix = np.argmax(im*mask)
+            for im, mz, an in zip(self.images, self.precursors, self.annotations):
+                fmask = ndimage.gaussian_filter(np.asarray(mask == mz, dtype=float), sigma=sigma, order=0)
+                if fmask.max() > 0.:
+                    fmask = fmask / (8. * fmask.max())
+                fmask = 1. - fmask
+                _mask = im * np.asarray(mask == 0., dtype=float) * fmask
+                mix = np.argmax(_mask)
                 y = mix / im.shape[1]
                 x = mix % im.shape[1]
-                #print(np.max(im*mask), (im*mask)[y,x], mask[y,x], mz)
-                mask[y,x] = 0.
-                #print(mask.flatten()[mix])
+                mask[y, x] = mz
                 self.targets.append([[x, y], [], an, mz])
 
     def pixel_to_motor(self, primary):
@@ -85,7 +93,7 @@ class Experiment():
             unpad = lambda x: x[0:-1]
         return unpad(np.dot(pad(vect), self.A))
 
-    def write_inclusion_list(self, dr, data_name = None):
+    def write_inclusion_list(self, data_name = None, replaceadduct=None, replacepolarity=None):
         if not data_name:
             data_name = self.dataset_name
         header = ["Formula [M]", "Formula type", "Species", "CS [z]", "Polarity", "Start [min]", "End [min]", "(N)CE",
@@ -95,27 +103,38 @@ class Experiment():
         inclusion = []
         ms2_mzs = []
         for target in self.targets:
+            mf = target[2][0]
+            adduct = target[2][1]
+            polarity = self.metadata['MS_Analysis']['Polarity']
+            if replaceadduct:
+                adduct = replaceadduct
+            if replacepolarity:
+                polarity = replacepolarity
             inclusion.append(
-                [target[1][0], 'Chemical formula', target[1][1], "1", self.metadata['MS_Analysis']['Polarity'], "", "", "", "", "", ""])
-            ms2_mzs.append(target[2])
+                [mf, 'Chemical formula', adduct, "1", polarity, "", "", "", "", "", ""])
+            ms2_mzs.append(target[3])
         df = pd.DataFrame.from_records(inclusion, columns=header)
-        pth = os.path.join(dr, "inclusion_list_{}.csv".format(data_name).replace("/", "_"))
+        pth = os.path.join(self.datadir, "inclusion_list_{}.csv".format(data_name).replace("/", "_"))
         df.to_csv(pth, sep=',', index=False)
         s = pd.Series(ms2_mzs)
-        spth = os.path.join(dr, "inclusion_list_mzs_{}.csv".format(data_name).replace("/", "_"))
+        spth = os.path.join(self.datadir, "inclusion_list_mzs_{}.csv".format(data_name).replace("/", "_"))
         s.to_csv(spth)
         return pth, spth
 
+    @property
+    def coords_fname(self):
+        return os.path.join(self.datadir, "{}-{}.positions.json".format(self.dataset_name, datetime.datetime.now().strftime("%Y%m%d-%hh%mm%ss")))
+
+    @property
+    def log_fname(self):
+        return os.path.join(self.datadir, "logfile_{}-{}".format(self.dataset_name, datetime.datetime.now().strftime("%Y%m%d-%hh%mm%ss")))
 
     def acquire(self, rc_fn,  dummy=True, image_bounds = None):
-        import json
-        import datetime
-        print "Acquiring {}".format(self.dataset_name)
+        print("Acquiring {}".format(self.dataset_name))
         xys = np.asarray([t[0] for t in self.targets])
         pos = np.asarray([t[1] for t in self.targets])
         ### ----- Config ---- ###
-        self.log_fname = "./logfile_{}-{}".format(self.dataset_name, datetime.datetime.now())
-        fout = file(self.log_fname, 'w+')
+        fout = open(self.log_fname, 'w+')
         config = json.load(open(rc_fn))
         HOST = config['host']
         user = config['user']
@@ -130,10 +149,10 @@ class Experiment():
             for xyz in pos:
                 rc.acquirePixel(child, xyz, image_bounds, dummy=dummy)
         except Exception as e:
-            print e
+            print(e)
             raise
         child.sendline("End")
         child.close()
-        coords_fname = "/media/embl/shared/directcontrolpositions/{}-{}.positions.json".format(self.dataset_name, datetime.datetime.now())
-        rc.save_coords(coords_fname, xys, pos, [], [])
-        print 'done
+
+        rc.save_coords(self.coords_fname, xys, pos, [], [])
+        print('done')
