@@ -3,16 +3,18 @@ import json
 import pandas as pd
 import os
 import numpy as np
-import remote_control.control as rc
 import datetime
 import json
 
+from remote_control.utils import acquire
+
 class Experiment():
-    def __init__(self, ds_id, fdr=0.1, database='HMDB', config=None, datadir = "."):
+    def __init__(self, ds_id, rc_fn, fdr=0.1, database='HMDB', config=None, datadir = "."):
         self.connect_metaspace(config)
         self.init_dataset(ds_id)
         self.get_annotations(fdr, database)
         self.datadir = datadir
+        self.config = json.load(open(rc_fn))
 
 
     def connect_metaspace(self, config):
@@ -43,7 +45,7 @@ class Experiment():
         import numpy as np
         import scipy.ndimage as ndimage
         print("{} targets will be generated".format(pertarget * len(self.images)))
-        self.targets = []
+        targets = {}
         mask = np.zeros(self.images[0].shape, dtype=float)
         sigma = 3
         for ii in range(pertarget):
@@ -57,7 +59,10 @@ class Experiment():
                 y = mix / im.shape[1]
                 x = mix % im.shape[1]
                 mask[y, x] = mz
-                self.targets.append([[x, y], [], an, mz])
+                targets[(x,y)] = [[x, y], [], an, mz]
+        self.targets = [targets[t] for t in targets]
+        print("{} targets generated".format(len(self.targets)))
+
 
     def pixel_to_motor(self, primary):
         # primary = [0,0], [1,1], [0,1], [1,0] corners of image
@@ -129,30 +134,8 @@ class Experiment():
     def log_fname(self):
         return os.path.join(self.datadir, "logfile_{}-{}".format(self.dataset_name, datetime.datetime.now().strftime("%Y%m%d-%hh%mm%ss")))
 
-    def acquire(self, rc_fn,  dummy=True, image_bounds = None):
+    def acquire(self,  dummy=True, image_bounds = None):
         print("Acquiring {}".format(self.dataset_name))
         xys = np.asarray([t[0] for t in self.targets])
         pos = np.asarray([t[1] for t in self.targets])
-        ### ----- Config ---- ###
-        fout = open(self.log_fname, 'w+')
-        config = json.load(open(rc_fn))
-        HOST = config['host']
-        user = config['user']
-        password = config['password']
-
-        ### --- Automatic Stuff ---###
-
-        child = rc.initialise_and_login(HOST, user, password, fout, fout_r=None, fout_s=None)
-        child.sendline('Begin')
-        child.expect("OK")
-        try:
-            for xyz in pos:
-                rc.acquirePixel(child, xyz, image_bounds, dummy=dummy)
-        except Exception as e:
-            print(e)
-            raise
-        child.sendline("End")
-        child.close()
-
-        rc.save_coords(self.coords_fname, xys, pos, [], [])
-        print('done')
+        acquire(self.config, self.log_fname, xys, pos, image_bounds, dummy, self.coords_fname)
