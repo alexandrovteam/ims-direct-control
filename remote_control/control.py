@@ -2,7 +2,7 @@ import pexpect
 import numpy as np
 
 def initialise_and_login(HOST, user, password, fout, fout_r, fout_s):
-    child = pexpect.spawn('telnet {}'.format(HOST))
+    child = pexpect.spawnu('telnet {}'.format(HOST))
     if fout:
         child.logfile = fout
     if fout_r:
@@ -24,16 +24,17 @@ def ix_to_pos(x, y, px_size, im_origin):
     return im_origin[0] - x * px_size[0], im_origin[1] + y * px_size[1], im_origin[2]
 
 
-def gotostr(xyz):
+def gotostr(xyz,maxtravel=2000):
+    # TODO limit maximum single travel step
     return "Goto {};{};{}".format(xyz[0], xyz[1], xyz[2]).replace(".", ",")
 
 
-def acquirePixel(child, xyz, image_bounds=None, dummy=False):
+def acquirePixel(child, xyz, image_bounds=None, dummy=False, maxtravel = 2000):
     if image_bounds:
         x, y = xyz[0], xyz[1]
         if not all([image_bounds[0][0] > x > image_bounds[1][0], image_bounds[0][1] < y < image_bounds[1][1]]):
             print(x, y, [image_bounds[0][0] > x > image_bounds[1][0], image_bounds[0][1] < y < image_bounds[1][1]])
-            raise IOError('Pixel out of bounding box {}'.format(image_bounds))
+            raise IOError('Pixel {} out of bounding box {}'.format((x,y), image_bounds))
     if dummy:
         print(gotostr(xyz))
         return 0
