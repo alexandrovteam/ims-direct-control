@@ -19,7 +19,7 @@ def decode_b64png(s, imshape):
     :return: numpy array
     '''
     import base64
-    r = base64.decodestring(s)
+    r = base64.decodebytes(s)
     q = np.frombuffer(r.split('\n')[2], dtype=np.float32)
     return q.reshape(imshape)
 
