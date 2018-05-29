@@ -11,27 +11,40 @@ from remote_control.utils import acquire
 SLIDES = {
         "spot30":
            { "spot_spacing": (6, 5, 1), #h,v (mm)
-            "spot_size":(2, 2, 1), #h, v (mm)
+            "spot_size":(2., 2., 1.), #h, v (mm)
             "grid_size":(3, 10), # h, v
+             "shape": "circle",
            },
         "spot10":
            {"spot_spacing": (11.7, 9.7, 1), #h,v (mm) centre to centre distance
             "spot_size": (6.7, 6.7, 1), #h, v (mm)
-            "grid_size": (2,5), # h, v
+            "grid_size": (2,5), # h, v,
+            "shape": "circle",
+           },
+        "labtek":
+           {"spot_spacing": (1.2, 1.2, 1), #h,v (mm) centre to centre distance
+            "spot_size": (3., 2., 1.), #h, v (mm)
+            "grid_size": (1, 4), # h, v,
+            "shape": "rectangle",
            }
          }
 
 MASK_FUNCTIONS = {
-        "circle": lambda xv, yv, r, c: np.square(xv - c[0]) + np.square(yv - c[1]) < r ** 2,
-        "semi_circle_right": lambda xv, yv, r, c: (np.square(xv - c[0]) + np.square(yv - c[1]) < r ** 2) & (xv>c[0]),
-        "semi_circle_left": lambda xv, yv, r, c: (np.square(xv - c[0]) + np.square(yv - c[1]) < r ** 2) & (xv<c[0]),
-        "semi_circle_upper": lambda xv, yv, r, c: (np.square(xv - c[0]) + np.square(yv - c[1]) < r ** 2) & (yv<c[1]),
-        "semi_circle_lower": lambda xv, yv, r, c: (np.square(xv - c[0]) + np.square(yv - c[1]) < r ** 2) & (yv>c[1]),
-        "square": lambda xv, yv, r, c: (xv < c[0] + r/2.) & (xv > c[0] - r/2.) & (yv < c[1] + r/2.) & (yv > c[1] - r/2.),
-        "square_right": lambda xv, yv, r, c: (xv < c[0] + r/2.) & (xv > c[0]) & (yv < c[1] + r/2.) & (yv > c[1] - r/2.),
-        "square_left": lambda xv, yv, r, c: (xv < c[0]) & (xv > c[0] - r/2.) & (yv < c[1] + r/2.) & (yv > c[1] - r/2.),
-        "square_upper": lambda xv, yv, r, c: (xv < c[0] + r/2.) & (xv > c[0] - r/2.) & (yv < c[1]) & (yv > c[1] - r/2.),
-        "square_lower": lambda xv, yv, r, c: (xv < c[0] + r/2.) & (xv > c[0] - r/2.) & (yv < c[1] + r/2.) & (yv > c[1]),
+        "circle": lambda xv, yv, r, c: np.square(xv - c[0])/(np.min(r)/2)**2 + np.square(yv - c[1])/(np.min(r)/2) ** 2 < 1,
+        "ellipse": lambda xv, yv, r, c: np.square(xv - c[0])/(r[0]/2)**2 + np.square(yv - c[1])/(r[1]/2) ** 2 < 1,
+        "rectangle": lambda xv, yv, r, c: (xv < c[0] + r[0]/2.) & (xv > c[0] - r[0]/2.) & (yv < c[1] + r[1]/2.) & (yv > c[1] - r[1]/2.),
+}
+
+AREA_FUNCTIONS = {
+    None: lambda xv, yv, r, c: True,
+    "left": lambda xv, yv, r, c: (xv < c[0]),
+    "right": lambda xv, yv, r, c: (xv > c[0]),
+    "upper": lambda xv, yv, r, c: (yv > c[1]),
+    "lower": lambda xv, yv, r, c: (yv < c[1]),
+    "upper_left": lambda xv, yv, r, c: (xv < c[0]) & (yv > c[1]),
+    "upper_right": lambda xv, yv, r, c: (xv > c[0]) & (yv > c[1]),
+    "lower_left": lambda xv, yv, r, c: (xv < c[0]) & (yv < c[1]),
+    "lower_right": lambda xv, yv, r, c: (xv > c[0]) & (yv < c[1]),
 }
 
 
@@ -66,6 +79,8 @@ class Aquisition():
     def mask_function(self, mask_function_name):
         return MASK_FUNCTIONS[mask_function_name]
 
+    def area_function(self, area_function_name):
+        return AREA_FUNCTIONS[area_function_name]
 
 class RectangularAquisition(Aquisition):
     def __init__(self, name, imorigin, dim_x, dim_y, pixelsize_x, pixelsize_y,  *args, **kwargs):
@@ -170,7 +185,10 @@ class WellPlateGridAquisition(Aquisition):
 
     def generate_targets(self, wells_to_acquire, pixelsize_x, pixelsize_y,
                                     offset_x, offset_y,
-                                    mask_function_name):
+                                    mask_function_name=None, area_function_name=None):
+        if mask_function_name is None:
+            mask_function_name = self.plate['shape']
+
         measurement_bounds = self.get_measurement_bounds(wells_to_acquire)
 
         x0, y0 = measurement_bounds.min(axis=0)[0:2]
@@ -181,11 +199,14 @@ class WellPlateGridAquisition(Aquisition):
         _z = interpolate.interp2d(measurement_bounds[:, 0], measurement_bounds[:, 1], measurement_bounds[:, 2])
         xv, yv = np.meshgrid(x, y)
         mask = np.zeros(xv.shape)
-        r = self.plate["spot_size"][0] * 1000. / 2.
+        r = [_d*1000 for _d in self.plate["spot_size"]]
 
         for well in wells_to_acquire:
             c = self.transform(self.well_coord(np.asarray([well[0], well[1], 0]).reshape(1, -1), 'centre'))[0]
-            mask[self.mask_function(mask_function_name)(xv, yv, r, c)] += 1
+            mask[
+                self.mask_function(mask_function_name)(xv, yv, r, c)
+                * self.area_function(area_function_name)(xv, yv, r, c)
+            ] += 1
 
         mask_labels = measure.label(mask, background=0)
         self.targets = []
@@ -207,6 +228,7 @@ class WellPlateGridAquisition(Aquisition):
                       pixelsize_x=50, pixelsize_y=50,
                       offset_x = 0, offset_y=0,
                       area_shape="circle",
+                      area_mask = None,
                       safety_box=None):
         """
         :param wells_to_acquire: index (x,y) of wells to image
@@ -222,7 +244,7 @@ class WellPlateGridAquisition(Aquisition):
         self.generate_targets(wells_to_acquire,
                               pixelsize_x, pixelsize_y,
                               offset_x, offset_y,
-                              area_shape)
+                              area_shape, area_mask)
         print("total pixels: ", len(self.targets))
         if dummy:
             import matplotlib.pyplot as plt
