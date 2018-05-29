@@ -38,10 +38,11 @@ def acquirePixel(child, xyz, image_bounds=None, dummy=False, maxtravel = 2000):
     if dummy:
         print(gotostr(xyz))
         return 0
-    child.sendline(gotostr(xyz))
-    child.expect("OK")
-    child.sendline('Meas')
-    return child.expect("OK")
+    else:
+        child.sendline(gotostr(xyz))
+        child.expect("OK")
+        child.sendline('Meas')
+        return child.expect("OK")
 
 
 def login(child, user, password):

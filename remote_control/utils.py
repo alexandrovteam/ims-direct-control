@@ -25,19 +25,28 @@ def decode_b64png(s, imshape):
 
 
 def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname):
-    fout = open(log_fname, 'w+')
-    child = rc.initialise_and_login(config['host'], config['user'], config['password'], fout,
-                                    fout_r=None, fout_s=None)
-    child.sendline('Begin')
-    child.expect("OK")
-    try:
-        for xyz in pos:
-            rc.acquirePixel(child, xyz, image_bounds, dummy=dummy)
-    except Exception as e:
-        print(e)
-        raise
-    child.sendline("End")
-    child.close()
 
-    rc.save_coords(coords_fname, xys, pos, [], [])
+    fout = open(log_fname, 'w+')
+    if not dummy:
+        child = rc.initialise_and_login(config['host'], config['user'], config['password'], fout,
+                                    fout_r=None, fout_s=None)
+        child.sendline('Begin')
+        child.expect("OK")
+        try:
+            for xyz in pos:
+                rc.acquirePixel(child, xyz, image_bounds, dummy=dummy)
+        except Exception as e:
+            print(e)
+            raise
+        child.sendline("End")
+        child.close()
+        rc.save_coords(coords_fname, xys, pos, [], [])
+    else:
+        try:
+            for xyz in pos:
+                child = ""
+                rc.acquirePixel(child, xyz, image_bounds, dummy=dummy)
+        except Exception as e:
+            print(e)
+            raise
     print('done')
