@@ -30,7 +30,7 @@ SLIDES = {
          }
 
 MASK_FUNCTIONS = {
-        "circle": lambda xv, yv, r, c: np.square(xv - c[0])/(np.min(r)/2)**2 + np.square(yv - c[1])/(np.min(r)/2) ** 2 < 1,
+        "circle": lambda xv, yv, r, c: np.square(xv - c[0])/((r[0]/2)**2) + np.square(yv - c[1])/((r[0]/2)** 2) < 1,
         "ellipse": lambda xv, yv, r, c: np.square(xv - c[0])/(r[0]/2)**2 + np.square(yv - c[1])/(r[1]/2) ** 2 < 1,
         "rectangle": lambda xv, yv, r, c: (xv < c[0] + r[0]/2.) & (xv > c[0] - r[0]/2.) & (yv < c[1] + r[1]/2.) & (yv > c[1] - r[1]/2.),
 }
@@ -267,9 +267,10 @@ class WellPlateGridAquisition(Aquisition):
             plt.axis('equal')
             plt.gca().invert_yaxis()
             plt.show()
-
-        self.acquire(dataset_name=dataset_name, dummy=dummy, image_bounds=safety_box)
-        self.write_imzml_coords(dataset_name)
+            self.acquire(dataset_name=dataset_name, dummy=dummy, image_bounds=safety_box)
+        else:
+            self.acquire(dataset_name=dataset_name, dummy=dummy, image_bounds=safety_box)
+            self.write_imzml_coords(dataset_name)
         return self.targets
 
 
