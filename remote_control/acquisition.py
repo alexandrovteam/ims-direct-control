@@ -110,8 +110,12 @@ class RectangularAquisition(Aquisition):
 
 class WellPlateGridAquisition(Aquisition):
     def __init__(self, plate_type, *args, **kwargs):
-        self.plate_type = plate_type
-        self.plate = SLIDES[plate_type]
+        if isinstance(plate_type, dict):
+            self.plate_type = plate_type['name']
+            self.plate=plate_type
+        else:
+            self.plate_type = plate_type
+            self.plate = SLIDES[plate_type]
         self.tform = [] #transformation matrix
         super().__init__(*args, **kwargs)
 
@@ -147,8 +151,8 @@ class WellPlateGridAquisition(Aquisition):
         TRANSFORMS = {
             "centre":       lambda wellixs: spacing * wellixs + self.origin,
             "top_left":     lambda wellixs: spacing * wellixs,
-            "top_right":    lambda wellixs: spacing * wellixs + np.asarray([0, self.origin[1], 0]),
-            "bottom_left":  lambda wellixs: spacing * wellixs + np.asarray([self.origin[0], 0, 0]),
+            "top_right":    lambda wellixs: spacing * wellixs + np.asarray([2*self.origin[0], 0, 0]),
+            "bottom_left":  lambda wellixs: spacing * wellixs + np.asarray([0, 2*self.origin[1], 0]),
             "bottom_right": lambda wellixs: spacing * wellixs + 2*self.origin
         }
         assert location in LOCATIONS, "location not in {}".format(LOCATIONS)
@@ -165,8 +169,8 @@ class WellPlateGridAquisition(Aquisition):
         maxs = np.max(wells_to_acquire, axis=0)
         extremes =[
             [mins[0], mins[1], 0],
-            [mins[0], maxs[1], 0],
             [maxs[0], mins[1], 0],
+            [mins[0], maxs[1], 0],
             [maxs[0], maxs[1], 0]
         ]
         locations = ["top_left", "top_right", "bottom_left", "bottom_right"]
@@ -178,7 +182,7 @@ class WellPlateGridAquisition(Aquisition):
         fn = self.coords_fname(dataset_name)
         coords = json.load(open(fn))
         fn2 = fn.replace(".json", "imzc.txt")
-        with open(fn2, "w") as f:
+        with open(fn2, "w+") as f:
             for x, y in zip(coords['index x'], coords['index y']):
                 f.write("{} {}\n".format(int(x), int(y)))
 
@@ -186,7 +190,9 @@ class WellPlateGridAquisition(Aquisition):
     def generate_targets(self, wells_to_acquire, pixelsize_x, pixelsize_y,
                                     offset_x, offset_y,
                                     mask_function_name=None, area_function_name=None):
+
         if mask_function_name is None:
+            print(self.plate)
             mask_function_name = self.plate['shape']
 
         measurement_bounds = self.get_measurement_bounds(wells_to_acquire)
@@ -221,15 +227,18 @@ class WellPlateGridAquisition(Aquisition):
             ])
             self.targets.extend(_xy)
 
+    def set_image_bounds(self, image_bounds):
+        self.image_bounds = image_bounds
+
     def acquire_wells(self,
                       wells_to_acquire,
                       dataset_name,
                       dummy=True,
                       pixelsize_x=50, pixelsize_y=50,
                       offset_x = 0, offset_y=0,
-                      area_shape="circle",
+                      area_shape = None,
                       area_mask = None,
-                      safety_box=None):
+                      ):
         """
         :param wells_to_acquire: index (x,y) of wells to image
         :param dataset_name: output filename (should match .raw filename)
@@ -246,34 +255,34 @@ class WellPlateGridAquisition(Aquisition):
                               offset_x, offset_y,
                               area_shape, area_mask)
         print("total pixels: ", len(self.targets))
-        if dummy:
-            import matplotlib.pyplot as plt
-            xys = np.asarray([t[0] for t in self.targets])
-            pos = [t[1] for t in self.targets]
-            print(xys)
-            plt.figure()
-            plt.plot([xy[0] for xy in xys], [xy[1] for xy in xys])
-            plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys])
-            plt.axis('equal')
-            plt.show()
-
-            plt.figure()
-            plt.scatter([xy[0] for xy in pos], [xy[1] for xy in pos])
-            plt.plot(
-                [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0]],
-                [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1]],
-                "--r"
-            )
-            plt.axis('equal')
-            plt.gca().invert_yaxis()
-            plt.show()
-            self.acquire(dataset_name=dataset_name, dummy=dummy, image_bounds=safety_box)
-        else:
-            self.acquire(dataset_name=dataset_name, dummy=dummy, image_bounds=safety_box)
+        self.acquire(dataset_name=dataset_name, dummy=dummy)
+        if not dummy:
             self.write_imzml_coords(dataset_name)
-        return self.targets
 
 
+    def plot_targets(self):
+        import matplotlib.pyplot as plt
+        safety_box = self.image_bounds
+        xys = np.asarray([t[0] for t in self.targets])
+        pos = [t[1] for t in self.targets]
+
+        plt.figure()
+        plt.plot([xy[0] for xy in xys], [xy[1] for xy in xys])
+        plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys])
+        plt.axis('equal')
+        plt.show()
+
+        plt.figure()
+        plt.scatter([xy[0] for xy in pos], [xy[1] for xy in pos], c=[xy[2] for xy in pos])
+        plt.plot(
+            [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0]],
+            [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1]],
+            "--r"
+        )
+        plt.axis('equal')
+        plt.gca().invert_yaxis()
+        plt.colorbar()
+        plt.show()
 
 
 
