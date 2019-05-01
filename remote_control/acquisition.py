@@ -154,7 +154,21 @@ class RectangularAquisition(Aquisition):
                          x_pitch=None, y_pitch=None,
                          x_size=None, y_size=None,
                          interpolate_xy=False):
-        self.targets = []
+        """
+        :param calibration_positions: Coordinates used for calculating the Z axis.
+        :param target_positions: Coordinates of the 4 corners to sample
+        :param x_pitch: Distance between pixels in the X axis (calculated from x_size if needed)
+        :param y_pitch: Distance between pixels in the Y axis (calculated from y_size if needed)
+        :param x_size: Number of pixels in the X axis (calculated from x_pitch if needed)
+        :param y_size: Number of pixels in the Y axis (calculated from y_pitch if needed)
+        :param interpolate_xy: False to use a linear transform for calculating X/Y, which ensures the shape is at least
+                               a parallelogram so that the x/y pitch is consistent.
+                               True to use interpolation, which allows the shape to be trapezoidal, which ensures that
+                               target_positions are hit exactly, but can lead to uneven pitches
+
+        """
+
+        # Normalize inputs
         calibration_positions = np.array(calibration_positions)
         target_positions = np.array(target_positions)[:, :2]
 
@@ -168,10 +182,11 @@ class RectangularAquisition(Aquisition):
         if y_pitch is not None and y_size is None:
             y_size = int(euclidean(target_positions[0], target_positions[2]) / y_pitch)
         elif y_pitch is None and y_size is not None:
-            y_pitch = euclidean(target_positions[0], target_positions[1]) / y_size
+            y_pitch = euclidean(target_positions[0], target_positions[2]) / y_size
         else:
             raise ValueError("either y_pitch or y_size must be specified, but not both")
 
+        # Calculate the coordinate frames and print debug info
         corner_coords = np.array([(0, 0, 1), (x_size, 0, 1), (0, y_size, 1), (x_size, y_size, 1)])
         print(f"Output size: {x_size} x {y_size} pixels")
         print(f"Output grid pitch: {x_pitch:#.5g} x {y_pitch:#.5g}")
@@ -192,12 +207,13 @@ class RectangularAquisition(Aquisition):
             coord_to_xy_matrix = np.linalg.lstsq(corner_coords, target_positions, rcond=None)[0]
             coord_to_xy = lambda cx, cy: tuple(np.dot((cx, cy, 1), coord_to_xy_matrix).tolist())
 
+        # Write all coordinates to self.targets
+        self.targets = []
         for cy in range(y_size):
             for cx in range(x_size):
                 x_pos, y_pos = coord_to_xy(cx, cy)
                 z_pos = xy_to_z(x_pos, y_pos).item(0)
                 self.targets.append(([cx, cy], [x_pos, y_pos, z_pos]))
-
 
 
 class WellPlateGridAquisition(Aquisition):
