@@ -11,6 +11,9 @@ setup(name='remote_control',
       install_requires=[
           'pandas',
           'numpy',
+          'scipy',
           'pexpect',
-          'pyMSpec'
+          'pyMSpec',
+          'matplotlib==2.0.2',
+          'scikit-image',
       ])

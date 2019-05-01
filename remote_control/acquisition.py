@@ -1,10 +1,7 @@
-import json
-import pandas as pd
-import os
 import numpy as np
-import datetime
 import json
 from scipy import interpolate
+from scipy.spatial.distance import euclidean, cosine
 from skimage import measure
 from remote_control.utils import acquire
 
@@ -57,6 +54,27 @@ def rms(v):
 pad = lambda x: np.hstack([x, np.ones((x.shape[0], 1))])
 unpad = lambda x: x[:, :-1]
 
+
+def coord_formatter(data_x, data_y, data_z):
+    data_x, data_y, data_z = map(np.array, [data_x, data_y, data_z])
+
+    def format_coord(x,y):
+        i = np.argmin((data_x - x) ** 2 + (data_y - y) ** 2)
+        return 'Cursor: x=%#.5g, y=%#.5g\nNearest: x=%#.5g, y=%#.5g, z=%#.5g' % (x, y, data_x[i], data_y[i], data_z[i])
+
+    return format_coord
+
+
+def grid_deviation(coords):
+    """Models a linear transform based on the 4 supplied coords and returns the maximum error for each axis"""
+    base_coords = [(0, 0, 1), (1, 0, 1), (0, 1, 1), (1, 1, 1)]
+    coords = np.array(list(coords))
+    tform = np.linalg.lstsq(base_coords, coords, rcond=None)[0]
+    result_coords = np.array([np.dot(base_coord, tform) for base_coord in base_coords])
+    error = np.max(np.abs(result_coords - coords), axis=0)
+    return error
+
+
 class Aquisition():
     def __init__(self, config_fn, datadir, log_fname=""):
         self.parse_config(config_fn)
@@ -68,13 +86,27 @@ class Aquisition():
         self.config = json.load(open(config_fn))
 
     def coords_fname(self, dataset_name):
-        raise NotImplementedError
+        return dataset_name + 'positions.json'
 
-    def acquire(self, dataset_name, dummy=True, image_bounds=None):
+    def write_imzml_coords(self, dataset_name):
+        import json
+        fn = self.coords_fname(dataset_name)
+        coords = json.load(open(fn))
+        fn2 = fn.replace(".json", "imzc.txt")
+        with open(fn2, "w+") as f:
+            for x, y in zip(coords['index x'], coords['index y']):
+                f.write("{} {}\n".format(int(x), int(y)))
+
+    def set_image_bounds(self, image_bounds):
+        self.image_bounds = image_bounds
+
+    def acquire(self, dataset_name, dummy=True):
         print("Acquiring {}".format(dataset_name))
         xys = np.asarray([t[0] for t in self.targets])
         pos = np.asarray([t[1] for t in self.targets])
-        acquire(self.config, self.log_fname, xys, pos, image_bounds, dummy, self.coords_fname(dataset_name))
+        acquire(self.config, self.log_fname, xys, pos, self.image_bounds, dummy, self.coords_fname(dataset_name))
+        if not dummy:
+            self.write_imzml_coords(dataset_name)
 
     def mask_function(self, mask_function_name):
         return MASK_FUNCTIONS[mask_function_name]
@@ -82,30 +114,90 @@ class Aquisition():
     def area_function(self, area_function_name):
         return AREA_FUNCTIONS[area_function_name]
 
+    def apply_image_mask(self, filename, threshold=0.5):
+        import matplotlib.pyplot as plt
+        img = np.atleast_3d(plt.imread(filename))
+        mask = np.mean(img, axis=2) > threshold
+        self.targets = [([cx, cy], pos) for ((cx, cy), pos) in self.targets
+                        if cx < mask.shape[0] and cy < mask.shape[1] and mask[cx, cy]]
+
+    def plot_targets(self):
+        import matplotlib.pyplot as plt
+        safety_box = self.image_bounds
+        xys = np.asarray([t[0] for t in self.targets])
+        pos = [t[1] for t in self.targets]
+
+        plt.figure()
+        plt.plot([xy[0] for xy in xys], [xy[1] for xy in xys])
+        plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys])
+        plt.axis('equal')
+        plt.title("Output coordinates")
+        plt.show()
+
+        plt.figure()
+        plt.scatter([xy[0] for xy in pos], [xy[1] for xy in pos], c=[xy[2] for xy in pos])
+        plt.plot(
+            [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0]],
+            [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1]],
+            "--r"
+        )
+        plt.axis('equal')
+        plt.title("Physical shape")
+        plt.gca().invert_yaxis()
+        plt.gca().format_coord = coord_formatter([xy[0] for xy in pos], [xy[1] for xy in pos], [xy[2] for xy in pos])
+        plt.colorbar()
+        plt.show()
+
+
 class RectangularAquisition(Aquisition):
-    def __init__(self, name, imorigin, dim_x, dim_y, pixelsize_x, pixelsize_y,  *args, **kwargs):
-        self.imorigin = imorigin
-        self.imagedims = [dim_x, dim_y]
-        self.pixelsize = [float(pixelsize_x), float(pixelsize_y)]
-        self.generate_targets()
-        self.name = name
-        super().__init__( *args, **kwargs)
-
-    def generate_targets(self):
+    def generate_targets(self, calibration_positions, target_positions,
+                         x_pitch=None, y_pitch=None,
+                         x_size=None, y_size=None,
+                         interpolate_xy=False):
         self.targets = []
-        for y in range(self.imagedims[1]):
-            for x in range(self.imagedims[0]):
-                self.targets.append(
-                    ([x,y],
-                     [-x*self.pixelsize[0]+self.imorigin[0], y*self.pixelsize[1]+self.imorigin[1], self.imorigin[2]])
-                )
+        calibration_positions = np.array(calibration_positions)
+        target_positions = np.array(target_positions)[:, :2]
 
-    @property
-    def dataset_name(self):
-        return "{}_{}_{}".format(self.name, self.imagedims, self.pixelsize).replace(",", "_")
+        if x_pitch is not None and x_size is None:
+            x_size = int(euclidean(target_positions[0], target_positions[1]) / x_pitch)
+        elif x_pitch is None and x_size is not None:
+            x_pitch = euclidean(target_positions[0], target_positions[1]) / x_size
+        else:
+            raise ValueError("either x_pitch or x_size must be specified, but not both")
 
-    def coords_fname(self, dataset_name):
-        return dataset_name + datetime.datetime.now().strftime("%Y%m%d-%hh%mm%ss") + '.positions.json'
+        if y_pitch is not None and y_size is None:
+            y_size = int(euclidean(target_positions[0], target_positions[2]) / y_pitch)
+        elif y_pitch is None and y_size is not None:
+            y_pitch = euclidean(target_positions[0], target_positions[1]) / y_size
+        else:
+            raise ValueError("either y_pitch or y_size must be specified, but not both")
+
+        corner_coords = np.array([(0, 0, 1), (x_size, 0, 1), (0, y_size, 1), (x_size, y_size, 1)])
+        print(f"Output size: {x_size} x {y_size} pixels")
+        print(f"Output grid pitch: {x_pitch:#.5g} x {y_pitch:#.5g}")
+
+        xy_to_z = interpolate.interp2d(calibration_positions[:, 0], calibration_positions[:, 1], calibration_positions[:, 2])
+        error_x, error_y, error_z = grid_deviation([(x, y, *xy_to_z(x, y)) for x, y in target_positions])
+        grid_skew = cosine(target_positions[0] - target_positions[1] + target_positions[2] - target_positions[3],
+                           target_positions[0] - target_positions[2] + target_positions[1] - target_positions[3])
+        grid_skew_deg = np.rad2deg(np.arccos(grid_skew))
+        print(f"Maximum error due to grid irregularity: x={error_x:#.2f}, y={error_y:#.2f}, z={error_z:#.2f}")
+        print(f"Grid skew: {grid_skew_deg:#.1f} degrees")
+
+        if interpolate_xy:
+            coord_to_x = interpolate.interp2d(corner_coords[:, 0], corner_coords[:, 1], target_positions[:, 0])
+            coord_to_y = interpolate.interp2d(corner_coords[:, 0], corner_coords[:, 1], target_positions[:, 1])
+            coord_to_xy = lambda cx, cy: (coord_to_x(cx, cy).item(0), coord_to_y(cx, cy).item(0))
+        else:
+            coord_to_xy_matrix = np.linalg.lstsq(corner_coords, target_positions, rcond=None)[0]
+            coord_to_xy = lambda cx, cy: tuple(np.dot((cx, cy, 1), coord_to_xy_matrix).tolist())
+
+        for cy in range(y_size):
+            for cx in range(x_size):
+                x_pos, y_pos = coord_to_xy(cx, cy)
+                z_pos = xy_to_z(x_pos, y_pos).item(0)
+                self.targets.append(([cx, cy], [x_pos, y_pos, z_pos]))
+
 
 
 class WellPlateGridAquisition(Aquisition):
@@ -118,9 +210,6 @@ class WellPlateGridAquisition(Aquisition):
             self.plate = SLIDES[plate_type]
         self.tform = [] #transformation matrix
         super().__init__(*args, **kwargs)
-
-    def coords_fname(self, dataset_name):
-        return dataset_name + 'positions.json'
 
     def calibrate(self, instrument_positions, wells, ref_loc='centre'):
         """
@@ -177,15 +266,6 @@ class WellPlateGridAquisition(Aquisition):
         t = [self.transform(self.well_coord(e,l).reshape(1,-1))[0] for e,l in zip(extremes, locations)]
         return np.asarray(t)
 
-    def write_imzml_coords(self, dataset_name):
-        import json
-        fn = self.coords_fname(dataset_name)
-        coords = json.load(open(fn))
-        fn2 = fn.replace(".json", "imzc.txt")
-        with open(fn2, "w+") as f:
-            for x, y in zip(coords['index x'], coords['index y']):
-                f.write("{} {}\n".format(int(x), int(y)))
-
 
     def generate_targets(self, wells_to_acquire, pixelsize_x, pixelsize_y,
                                     offset_x, offset_y,
@@ -227,9 +307,6 @@ class WellPlateGridAquisition(Aquisition):
             ])
             self.targets.extend(_xy)
 
-    def set_image_bounds(self, image_bounds):
-        self.image_bounds = image_bounds
-
     def acquire_wells(self,
                       wells_to_acquire,
                       dataset_name,
@@ -256,33 +333,6 @@ class WellPlateGridAquisition(Aquisition):
                               area_shape, area_mask)
         print("total pixels: ", len(self.targets))
         self.acquire(dataset_name=dataset_name, dummy=dummy)
-        if not dummy:
-            self.write_imzml_coords(dataset_name)
-
-
-    def plot_targets(self):
-        import matplotlib.pyplot as plt
-        safety_box = self.image_bounds
-        xys = np.asarray([t[0] for t in self.targets])
-        pos = [t[1] for t in self.targets]
-
-        plt.figure()
-        plt.plot([xy[0] for xy in xys], [xy[1] for xy in xys])
-        plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys])
-        plt.axis('equal')
-        plt.show()
-
-        plt.figure()
-        plt.scatter([xy[0] for xy in pos], [xy[1] for xy in pos], c=[xy[2] for xy in pos])
-        plt.plot(
-            [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0]],
-            [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1]],
-            "--r"
-        )
-        plt.axis('equal')
-        plt.gca().invert_yaxis()
-        plt.colorbar()
-        plt.show()
 
 
 

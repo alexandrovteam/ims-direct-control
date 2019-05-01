@@ -56,11 +56,11 @@ def login(child, user, password):
 def save_coords(json_fname, xys, pos, im_origin, pixel_size):
     import json
     info = {
-        "index x": [xy[0] for xy in xys],
-        "index y": [xy[1] for xy in xys],
-        "pos x": [xy[0] for xy in pos],
-        "pos y": [xy[1] for xy in pos],
-        "pos z": [xy[2] for xy in pos],
+        "index x": [xy.item(0) for xy in xys],
+        "index y": [xy.item(1) for xy in xys],
+        "pos x": [xy.item(0) for xy in pos],
+        "pos y": [xy.item(1) for xy in pos],
+        "pos z": [xy.item(2) for xy in pos],
         "pixel size": pixel_size,
         "im_origin": im_origin
     }

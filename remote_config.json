@@ -1,0 +1,5 @@
+{ 
+    "host": "ip.address.of.ims.control.computer",
+    "user": "telnet-username",
+    "password": "telnet-password"
+}
