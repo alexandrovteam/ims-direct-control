@@ -141,13 +141,13 @@ class Aquisition():
 
         plt.figure()
         plt.plot([xy[0] for xy in xys], [xy[1] for xy in xys])
-        plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys])
+        plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys], s=3)
         plt.axis('equal')
         plt.title("Output coordinates")
         plt.show()
 
         plt.figure()
-        plt.scatter([xy[0] for xy in pos], [xy[1] for xy in pos], c=[xy[2] for xy in pos])
+        plt.scatter([xy[0] for xy in pos], [xy[1] for xy in pos], c=[xy[2] for xy in pos], s=1)
         plt.plot(
             [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0]],
             [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1]],
