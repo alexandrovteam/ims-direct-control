@@ -196,8 +196,8 @@ class RectangularAquisition(Aquisition):
         grid_skew = cosine(target_positions[0] - target_positions[1] + target_positions[2] - target_positions[3],
                            target_positions[0] - target_positions[2] + target_positions[1] - target_positions[3])
         grid_skew_deg = np.rad2deg(np.arccos(grid_skew))
-        print(f"Maximum error due to grid irregularity: x={error_x:#.2f}, y={error_y:#.2f}, z={error_z:#.2f}")
-        print(f"Grid skew: {grid_skew_deg:#.1f} degrees")
+        print(f"Maximum error due to grid irregularity: x±{error_x:#.2f}, y±{error_y:#.2f}, z±{error_z:#.2f}")
+        print(f"Grid skew: {grid_skew_deg:#.1f}°")
 
         if interpolate_xy:
             coord_to_x = interpolate.interp2d(corner_coords[:, 0], corner_coords[:, 1], target_positions[:, 0])
