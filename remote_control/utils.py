@@ -28,6 +28,8 @@ def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname):
 
     fout = open(log_fname, 'w+')
     if not dummy:
+        rc.save_coords(coords_fname, xys, pos, [], [])
+
         child = rc.initialise_and_login(config['host'], config['user'], config['password'], fout,
                                     fout_r=None, fout_s=None)
         child.sendline('Begin')
@@ -40,7 +42,6 @@ def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname):
             raise
         child.sendline("End")
         child.close()
-        rc.save_coords(coords_fname, xys, pos, [], [])
     else:
         try:
             for xyz in pos:

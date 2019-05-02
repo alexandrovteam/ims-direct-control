@@ -51,6 +51,9 @@ def get_plate_info(name):
 def rms(v):
     return np.sqrt(np.square(v).sum())
 
+def unit_vector(v):
+    return v / np.linalg.norm(v)
+
 pad = lambda x: np.hstack([x, np.ones((x.shape[0], 1))])
 unpad = lambda x: x[:, :-1]
 
@@ -73,6 +76,14 @@ def grid_deviation(coords):
     result_coords = np.array([np.dot(base_coord, tform) for base_coord in base_coords])
     error = np.max(np.abs(result_coords - coords), axis=0)
     return error
+
+
+def grid_skew(coords):
+    ll, lh, hl, hh = coords[:4]
+    x_vector = unit_vector(ll - lh + hl - hh)
+    y_vector = unit_vector(ll - hl + lh - hh)
+    grid_skew = np.dot(x_vector, y_vector)
+    return np.rad2deg(np.arcsin(grid_skew))
 
 
 class Aquisition():
@@ -101,7 +112,7 @@ class Aquisition():
         self.image_bounds = image_bounds
 
     def acquire(self, dataset_name, dummy=True):
-        print("Acquiring {}".format(dataset_name))
+        print("Acquiring {} ({} pixels)".format(dataset_name, len(self.targets)))
         xys = np.asarray([t[0] for t in self.targets])
         pos = np.asarray([t[1] for t in self.targets])
         acquire(self.config, self.log_fname, xys, pos, self.image_bounds, dummy, self.coords_fname(dataset_name))
@@ -120,6 +131,7 @@ class Aquisition():
         mask = np.mean(img, axis=2) > threshold
         self.targets = [([cx, cy], pos) for ((cx, cy), pos) in self.targets
                         if cx < mask.shape[0] and cy < mask.shape[1] and mask[cx, cy]]
+        print(f'Number of pixels after mask: {len(self.targets)}')
 
     def plot_targets(self):
         import matplotlib.pyplot as plt
@@ -188,16 +200,14 @@ class RectangularAquisition(Aquisition):
 
         # Calculate the coordinate frames and print debug info
         corner_coords = np.array([(0, 0, 1), (x_size, 0, 1), (0, y_size, 1), (x_size, y_size, 1)])
-        print(f"Output size: {x_size} x {y_size} pixels")
+        print(f"Output size: {x_size} x {y_size} pixels (= {x_size*y_size} total pixels)")
         print(f"Output grid pitch: {x_pitch:#.5g} x {y_pitch:#.5g}")
 
         xy_to_z = interpolate.interp2d(calibration_positions[:, 0], calibration_positions[:, 1], calibration_positions[:, 2])
         error_x, error_y, error_z = grid_deviation([(x, y, *xy_to_z(x, y)) for x, y in target_positions])
-        grid_skew = cosine(target_positions[0] - target_positions[1] + target_positions[2] - target_positions[3],
-                           target_positions[0] - target_positions[2] + target_positions[1] - target_positions[3])
-        grid_skew_deg = np.rad2deg(np.arccos(grid_skew))
+
         print(f"Maximum error due to grid irregularity: x±{error_x:#.2f}, y±{error_y:#.2f}, z±{error_z:#.2f}")
-        print(f"Grid skew: {grid_skew_deg:#.1f}°")
+        print(f"Grid skew: {grid_skew(target_positions):#.1f}°")
 
         if interpolate_xy:
             coord_to_x = interpolate.interp2d(corner_coords[:, 0], corner_coords[:, 1], target_positions[:, 0])
