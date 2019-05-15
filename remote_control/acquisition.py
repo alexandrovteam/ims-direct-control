@@ -3,6 +3,8 @@ import json
 from scipy import interpolate
 from scipy.spatial.distance import euclidean, cosine
 from skimage import measure
+
+from remote_control.control import save_coords
 from remote_control.utils import acquire
 
 SLIDES = {
@@ -107,6 +109,18 @@ class Aquisition():
         with open(fn2, "w+") as f:
             for x, y in zip(coords['index x'], coords['index y']):
                 f.write("{} {}\n".format(int(x), int(y)))
+
+    def write_imzc_coords_file(self, filename):
+        xys = np.asarray([t[0] for t in self.targets])
+        with open(filename, "w") as f:
+            for x, y in xys[:, :2]:
+                f.write("{} {}\n".format(int(x), int(y)))
+
+    def write_json_coords_file(self, filename):
+        xys = np.asarray([t[0] for t in self.targets])
+        pos = np.asarray([t[1] for t in self.targets])
+        save_coords(filename, xys, pos, [], [])
+
 
     def set_image_bounds(self, image_bounds):
         self.image_bounds = image_bounds
@@ -326,12 +340,14 @@ class WellPlateGridAquisition(Aquisition):
             _xy = list([
                 (
                     ((_x - x0) / pixelsize_x, (_y - y0) / pixelsize_y),  # pixel index (x,y)
-                    (_x + offset_x, _y + offset_y, _z(_x, _y))  # absolute position (x,y,z)
+                    (_x + offset_x, _y + offset_y, _z(_x, _y)[0])  # absolute position (x,y,z)
 
                 )
                 for _x, _y in zip(xv[mask_labels == ii].flatten(), yv[mask_labels == ii].flatten())
             ])
             self.targets.extend(_xy)
+
+        print("total pixels: ", len(self.targets))
 
     def acquire_wells(self,
                       wells_to_acquire,
@@ -342,7 +358,7 @@ class WellPlateGridAquisition(Aquisition):
                       area_shape = None,
                       area_mask = None,
                       ):
-        """
+        """ DEPRECATED - use generate_targets and acquire separately instead
         :param wells_to_acquire: index (x,y) of wells to image
         :param dataset_name: output filename (should match .raw filename)
         :param dummy: dummy run (True, False)
@@ -357,7 +373,6 @@ class WellPlateGridAquisition(Aquisition):
                               pixelsize_x, pixelsize_y,
                               offset_x, offset_y,
                               area_shape, area_mask)
-        print("total pixels: ", len(self.targets))
         self.acquire(dataset_name=dataset_name, dummy=dummy)
 
 
