@@ -158,6 +158,7 @@ class Aquisition():
         plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys], s=3)
         plt.axis('equal')
         plt.title("Output coordinates")
+        plt.gca().invert_yaxis()
         plt.show()
 
         plt.figure()
