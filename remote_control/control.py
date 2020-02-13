@@ -1,8 +1,7 @@
 import pexpect
-import numpy as np
 
-def initialise_and_login(HOST, user, password, fout, fout_r, fout_s):
-    child = pexpect.spawnu('telnet {}'.format(HOST))
+def initialise_and_login(HOST, user, password, fout, fout_r=None, fout_s=None):
+    child = pexpect.spawn('telnet {}'.format(HOST), encoding='utf-8')
     if fout:
         child.logfile = fout
     if fout_r:
@@ -24,12 +23,33 @@ def ix_to_pos(x, y, px_size, im_origin):
     return im_origin[0] - x * px_size[0], im_origin[1] + y * px_size[1], im_origin[2]
 
 
-def gotostr(xyz,maxtravel=2000):
+def gotostr(xyz):
     # TODO limit maximum single travel step
     return "Goto {};{};{}".format(xyz[0], xyz[1], xyz[2]).replace(".", ",")
 
 
-def acquirePixel(child, xyz, image_bounds=None, dummy=False, maxtravel = 2000):
+def get_position(child, autofocus=True):
+    if autofocus:
+        child.sendline('aflight 20')
+        child.expect("OK")
+        child.sendline('lights 0')
+        child.expect("OK")
+        child.sendline('focus')
+        child.expect("OK")
+    child.sendline('getpos')
+    coord_line = child.readline()
+    coord_strs = coord_line.strip().replace(',','.').split(';')
+    coords = map(float, coord_strs)
+
+    if autofocus:
+        child.sendline('aflight 0')
+        child.expect("OK")
+
+    return coords
+
+
+
+def acquirePixel(child, xyz, image_bounds=None, dummy=False, measure=True):
     if image_bounds:
         x, y = xyz[0], xyz[1]
         if not all([image_bounds[0][0] > x > image_bounds[1][0], image_bounds[0][1] < y < image_bounds[1][1]]):
@@ -37,12 +57,12 @@ def acquirePixel(child, xyz, image_bounds=None, dummy=False, maxtravel = 2000):
             raise IOError('Pixel {} out of bounding box {}'.format((x,y), image_bounds))
     if dummy:
         print(gotostr(xyz))
-        return 0
     else:
         child.sendline(gotostr(xyz))
         child.expect("OK")
-        child.sendline('Meas')
-        return child.expect("OK")
+        if measure:
+            child.sendline('Meas')
+            child.expect("OK")
 
 
 def login(child, user, password):

@@ -24,7 +24,7 @@ def decode_b64png(s, imshape):
     return q.reshape(imshape)
 
 
-def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname):
+def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname, measure=True):
 
     fout = open(log_fname, 'w+')
     if not dummy:
@@ -36,7 +36,7 @@ def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname):
         child.expect("OK")
         try:
             for xyz in pos:
-                rc.acquirePixel(child, xyz, image_bounds, dummy=dummy)
+                rc.acquirePixel(child, xyz, image_bounds, measure=measure)
         except Exception as e:
             print(e)
             raise
@@ -46,8 +46,17 @@ def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname):
         try:
             for xyz in pos:
                 child = ""
-                rc.acquirePixel(child, xyz, image_bounds, dummy=dummy)
+                rc.acquirePixel(child, xyz, image_bounds, dummy=True)
         except Exception as e:
             print(e)
             raise
     print('done')
+
+def getpos(config, log_fname=None, autofocus=True):
+
+    fout = open(log_fname, 'w+') if log_fname else None
+    child = rc.initialise_and_login(config['host'], config['user'], config['password'], fout)
+    try:
+        return rc.get_position(child, autofocus)
+    finally:
+        child.close()

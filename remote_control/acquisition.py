@@ -125,11 +125,20 @@ class Aquisition():
     def set_image_bounds(self, image_bounds):
         self.image_bounds = image_bounds
 
-    def acquire(self, dataset_name, dummy=True):
+    def acquire(self, dataset_name, dummy=True, measure=True):
         print("Acquiring {} ({} pixels)".format(dataset_name, len(self.targets)))
         xys = np.asarray([t[0] for t in self.targets])
         pos = np.asarray([t[1] for t in self.targets])
-        acquire(self.config, self.log_fname, xys, pos, self.image_bounds, dummy, self.coords_fname(dataset_name))
+        acquire(
+            self.config,
+            self.log_fname,
+            xys,
+            pos,
+            self.image_bounds,
+            dummy,
+            self.coords_fname(dataset_name),
+            measure=measure
+        )
         if not dummy:
             self.write_imzml_coords(dataset_name)
 
@@ -252,6 +261,11 @@ class WellPlateGridAquisition(Aquisition):
         self.tform = [] #transformation matrix
         super().__init__(*args, **kwargs)
 
+        self.subpattern_coords = [(0, 0)]
+        self.subpattern_pixels = [(0, 0)]
+        self.subpattern_grid_size = (1,1)
+        self.subpattern_grid_offset = (1,1)
+
     def calibrate(self, instrument_positions, wells, ref_loc='centre'):
         """
         :param instrument_positions: positions of known locations from MCP (um). This should be the centre of the well.
@@ -312,6 +326,9 @@ class WellPlateGridAquisition(Aquisition):
                                     offset_x, offset_y,
                                     mask_function_name=None, area_function_name=None):
 
+        pixelsize_x *= self.subpattern_grid_size[0]
+        pixelsize_y *= self.subpattern_grid_size[1]
+
         if mask_function_name is None:
             print(self.plate)
             mask_function_name = self.plate['shape']
@@ -335,16 +352,24 @@ class WellPlateGridAquisition(Aquisition):
                 * self.area_function(area_function_name)(xv, yv, r, c)
             ] += 1
 
+        def make_subpattern(_x, _y):
+            sx, sy = self.subpattern_grid_size
+            ox, oy = self.subpattern_grid_offset
+            for (sc_x, sc_y), (sp_x, sp_y) in zip(self.subpattern_coords, self.subpattern_pixels):
+                pixel_x = (_x - x0) / pixelsize_x * sx + ox + sp_x
+                pixel_y = (_y - y0) / pixelsize_y * sy + oy + sp_y
+                pos_x = _x + offset_x + sc_x
+                pos_y = _y + offset_y + sc_y
+                pos_z = _z(pos_x, pos_y)[0]
+                yield (pixel_x, pixel_y), (pos_x, pos_y, pos_z)
+
         mask_labels = measure.label(mask, background=0)
         self.targets = []
         for ii in range(1, np.max(mask_labels) + 1):
             _xy = list([
-                (
-                    ((_x - x0) / pixelsize_x, (_y - y0) / pixelsize_y),  # pixel index (x,y)
-                    (_x + offset_x, _y + offset_y, _z(_x, _y)[0])  # absolute position (x,y,z)
-
-                )
+                coords
                 for _x, _y in zip(xv[mask_labels == ii].flatten(), yv[mask_labels == ii].flatten())
+                for coords in make_subpattern(_x, _y)
             ])
             self.targets.extend(_xy)
 
