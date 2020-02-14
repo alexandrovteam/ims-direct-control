@@ -30,8 +30,7 @@ def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname, meas
     if not dummy:
         rc.save_coords(coords_fname, xys, pos, [], [])
 
-        child = rc.initialise_and_login(config['host'], config['user'], config['password'], fout,
-                                    fout_r=None, fout_s=None)
+        child = rc.initialise_and_login(config)
         child.sendline('Begin')
         child.expect("OK")
         try:
@@ -55,7 +54,7 @@ def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname, meas
 def getpos(config, log_fname=None, autofocus=True):
 
     fout = open(log_fname, 'w+') if log_fname else None
-    child = rc.initialise_and_login(config['host'], config['user'], config['password'], fout)
+    child = rc.initialise_and_login(config)
     try:
         return rc.get_position(child, autofocus)
     finally:

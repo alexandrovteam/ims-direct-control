@@ -88,12 +88,15 @@ def grid_skew(coords):
     return np.rad2deg(np.arcsin(grid_skew))
 
 
-class Aquisition():
+class Acquisition():
     def __init__(self, config_fn, datadir, log_fname=""):
         self.parse_config(config_fn)
         self.log_fname = log_fname
         self.datadir = datadir
         self.targets = []
+
+        self.subpattern_coords = [(0, 0)] # Physical X/Y offsets (in µm)
+        self.subpattern_pixels = [(0, 0)] # Pixel-space X/Y offsets
 
     def parse_config(self, config_fn):
         self.config = json.load(open(config_fn))
@@ -124,6 +127,23 @@ class Aquisition():
 
     def set_image_bounds(self, image_bounds):
         self.image_bounds = image_bounds
+
+    def apply_subpattern(self):
+        psx, psy = np.max(self.subpattern_pixels, axis=1) + 1 # size of pixel grid
+
+        self.targets = [
+            ((px * psx + pox, py * psy + poy), (cx + cox, cy + coy, cz))
+            for (px, py), (cx, cy, cz) in self.targets
+            for (pox, poy), (cox, coy) in zip(self.subpattern_pixels, self.subpattern_coords)
+        ]
+
+    def apply_spiral_subpattern(self, spacing_x, spacing_y):
+        self.subpattern_pixels = [
+            (1,1),
+            (1,0),
+            ()
+        ]
+        self.subpattern_coords = (np.array(self.subpattern_pixels) * [[spacing_x, spacing_y]])
 
     def acquire(self, dataset_name, dummy=True, measure=True):
         print("Acquiring {} ({} pixels)".format(dataset_name, len(self.targets)))
@@ -185,7 +205,7 @@ class Aquisition():
         plt.show()
 
 
-class RectangularAquisition(Aquisition):
+class RectangularAquisition(Acquisition):
     def generate_targets(self, calibration_positions, target_positions,
                          x_pitch=None, y_pitch=None,
                          x_size=None, y_size=None,
@@ -250,7 +270,7 @@ class RectangularAquisition(Aquisition):
                 self.targets.append(([cx, cy], [x_pos, y_pos, z_pos]))
 
 
-class WellPlateGridAquisition(Aquisition):
+class WellPlateGridAquisition(Acquisition):
     def __init__(self, plate_type, *args, **kwargs):
         if isinstance(plate_type, dict):
             self.plate_type = plate_type['name']
@@ -260,11 +280,6 @@ class WellPlateGridAquisition(Aquisition):
             self.plate = SLIDES[plate_type]
         self.tform = [] #transformation matrix
         super().__init__(*args, **kwargs)
-
-        self.subpattern_coords = [(0, 0)]
-        self.subpattern_pixels = [(0, 0)]
-        self.subpattern_grid_size = (1,1)
-        self.subpattern_grid_offset = (1,1)
 
     def calibrate(self, instrument_positions, wells, ref_loc='centre'):
         """

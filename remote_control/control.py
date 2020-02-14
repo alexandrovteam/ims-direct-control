@@ -1,21 +1,24 @@
 import pexpect
 
-def initialise_and_login(HOST, user, password, fout, fout_r=None, fout_s=None):
-    child = pexpect.spawn('telnet {}'.format(HOST), encoding='utf-8')
-    if fout:
-        child.logfile = fout
-    if fout_r:
-        child.logfile_read = fout_r
-    if fout_s:
-        child.logfile_send = fout_s
+def initialise_and_login(config):
+    logfile = open(config['logfile'], 'w+')
+    cmd = config["telnet"] + ' ' + config['host']
+    if 'spawn' in dir(pexpect):
+        # POSIX
+        child = pexpect.spawn(cmd, encoding='utf-8', logfile=logfile)
+    else:
+        # Windows
+        from pexpect.popen_spawn import PopenSpawn
+        child = PopenSpawn(cmd, encoding='utf-8', logfile=logfile)
+
     child.sendline("")  # the login is strange and puts characters on the command line - this fails one login so we're ready for the next
     child.sendline("")
-    login(child, user, password)
+    login(child, config['user'], config['password'])
     try:
         child.expect('Connected.')
     except:
         if child.expect("Anmeldung.") == 0:
-            login(child, user, password)
+            login(child, config['user'], config['password'])
     return child
 
 
@@ -28,7 +31,7 @@ def gotostr(xyz):
     return "Goto {};{};{}".format(xyz[0], xyz[1], xyz[2]).replace(".", ",")
 
 
-def get_position(child, autofocus=True):
+def get_position(child, autofocus=True, reset_light_to=255):
     if autofocus:
         child.sendline('aflight 20')
         child.expect("OK")
@@ -44,9 +47,10 @@ def get_position(child, autofocus=True):
     if autofocus:
         child.sendline('aflight 0')
         child.expect("OK")
+    if reset_light_to is not None:
+        child.sendline(f'lights {reset_light_to}')
 
     return coords
-
 
 
 def acquirePixel(child, xyz, image_bounds=None, dummy=False, measure=True):
