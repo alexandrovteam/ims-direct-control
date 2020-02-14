@@ -382,6 +382,9 @@ class WellPlateGridAquisition(Acquisition):
 
         for well in wells_to_acquire:
             c = self.transform(self.well_coord(np.asarray([well[0], well[1], 0]).reshape(1, -1), 'centre'))[0]
+            c[0] = np.round(c[0] / pixelsize_x) * pixelsize_x
+            c[1] = np.round(c[1] / pixelsize_y) * pixelsize_y
+
             mask[
                 self.mask_function(mask_function_name)(xv, yv, r, c)
                 * self.area_function(area_function_name)(xv, yv, r, c)
