@@ -1,59 +1,113 @@
-import pexpect
+import sys, time
+from telnetlib import Telnet
+from datetime import datetime
 
+telnet = None
+logfile = None
+
+
+def expect(expected, timeout=5):
+    if isinstance(expected, str):
+        expected = [expected.encode()]
+    idx, match, data = telnet.expect(expected, timeout)
+    data = str(data, 'utf-8')
+    logfile.write(datetime.now().isoformat() + ': ' + data + '\r\n')
+    return data
+
+
+def readline(timeout=5):
+    data = telnet.read_until(b'\r\n', timeout)
+    data = str(data, 'utf-8')
+    logfile.write(datetime.now().isoformat() + ': ' + data + '\r\n')
+    return data
+    
+    
+def sendline(data):
+    telnet.write(data.encode() + b'\r\n')
+    logfile.write(datetime.now().isoformat() + ': ' + data + '\r\n')
+
+    
+def flush_output_buffer(delay=0.01):
+    time.sleep(delay)
+    data = telnet.read_eager()
+    data = str(data, 'utf-8')
+    logfile.write(datetime.now().isoformat() + ': ' + data + '\r\n')
+
+    
+def close(quit=False):
+    global telnet
+    if quit:
+        sendline('Quit')
+    telnet.close()
+    telnet = None
+    logfile = None
+    
+    
 def initialise_and_login(config):
-    logfile = open(config['logfile'], 'w+')
-    cmd = config["telnet"] + ' ' + config['host']
-    if 'spawn' in dir(pexpect):
-        # POSIX
-        child = pexpect.spawn(cmd, encoding='utf-8', logfile=logfile)
-    else:
-        # Windows
-        from pexpect.popen_spawn import PopenSpawn
-        child = PopenSpawn(cmd, encoding='utf-8', logfile=logfile)
+    global telnet, logfile
+    if telnet is None:
+        if config.get('logfile') == 'stdout':
+            logfile = sys.stdout
+        elif config.get('logfile'):
+            logfile = open(config['logfile'], 'w+')
+        else:
+            logfile = None
+        telnet = Telnet(config['host'])
+        
+        try:
+            expect('Benutzername:')
+            sendline(config['user'])
+            expect('Passwort:')
+            sendline(config['password'])
+            result = readline()
 
-    child.sendline("")  # the login is strange and puts characters on the command line - this fails one login so we're ready for the next
-    child.sendline("")
-    login(child, config['user'], config['password'])
-    try:
-        child.expect('Connected.')
-    except:
-        if child.expect("Anmeldung.") == 0:
-            login(child, config['user'], config['password'])
-    return child
-
-
-def ix_to_pos(x, y, px_size, im_origin):
-    return im_origin[0] - x * px_size[0], im_origin[1] + y * px_size[1], im_origin[2]
+            try:
+                expect('Benutzername:', timeout=0.005)
+                raise Error('Login failed')
+            except:
+                pass # No more login prompt = success
+        except:
+            telnet.close()
+            telnet = None
+            raise
 
 
 def gotostr(xyz):
     # TODO limit maximum single travel step
-    return "Goto {};{};{}".format(xyz[0], xyz[1], xyz[2]).replace(".", ",")
+    return "Goto {};{};{}".format(xyz[0], xyz[1], xyz[2])
 
 
-def get_position(child, autofocus=True, reset_light_to=255):
+def set_light(value):
+    sendline(f'Lights {value}')
+    expect("OK")
+    flush_output_buffer(0)
+    
+
+def get_position(autofocus=True, reset_light_to=255):
     if autofocus:
-        child.sendline('aflight 20')
-        child.expect("OK")
-        child.sendline('lights 0')
-        child.expect("OK")
-        child.sendline('focus')
-        child.expect("OK")
-    child.sendline('getpos')
-    coord_line = child.readline()
-    coord_strs = coord_line.strip().replace(',','.').split(';')
-    coords = map(float, coord_strs)
+        sendline('AfLaser 20')
+        expect("OK")
+        set_light(0)
+        sendline('Focus')
+        expect("OK")
+    
+    flush_output_buffer()
+    sendline('GetPos')
+    coord_line = readline()
+    coord_strs = coord_line.strip().replace(';OK','').split(';')
+    coords = tuple(map(float, coord_strs))
 
     if autofocus:
-        child.sendline('aflight 0')
-        child.expect("OK")
+        sendline('AfLaser 0')
+        expect("OK")
     if reset_light_to is not None:
-        child.sendline(f'lights {reset_light_to}')
+        set_light(0)
 
+    flush_output_buffer()
     return coords
 
 
-def acquirePixel(child, xyz, image_bounds=None, dummy=False, measure=True):
+def acquirePixel(xyz, image_bounds=None, dummy=False, measure=True):
     if image_bounds:
         x, y = xyz[0], xyz[1]
         if not all([image_bounds[0][0] > x > image_bounds[1][0], image_bounds[0][1] < y < image_bounds[1][1]]):
@@ -62,19 +116,13 @@ def acquirePixel(child, xyz, image_bounds=None, dummy=False, measure=True):
     if dummy:
         print(gotostr(xyz))
     else:
-        child.sendline(gotostr(xyz))
-        child.expect("OK")
+        sendline(gotostr(xyz))
+        expect("OK\r\n")
+        flush_output_buffer(0)
         if measure:
-            child.sendline('Meas')
-            child.expect("OK")
-
-
-def login(child, user, password):
-    child.expect('Benutzername:')
-    child.sendline(user)
-    child.expect('Passwort:')
-    child.sendline(password)
-    # TODO return child.expect(<confirmation string?>)
+            sendline('Meas')
+            expect("OK\r\n")
+            flush_output_buffer(0)
 
 
 def save_coords(json_fname, xys, pos, im_origin, pixel_size):
@@ -92,14 +140,6 @@ def save_coords(json_fname, xys, pos, im_origin, pixel_size):
     return 0
 
 
-def ping(child):
-    # Ping the instrument with a single pixel aquisition
-    # child = initialise_and_login(HOST, user, password, fout)
-    child.sendline('Begin')
-    child.sendline('Meas')
-    child.sendline('End')
-    child.close()
-
-
-def runner(config):
-    return NotImplementedError()
+    
+def telnet_disconnect(child_):
+    child.sendline('Quit')

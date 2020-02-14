@@ -1,5 +1,6 @@
 import numpy as np
 import remote_control.control as rc
+import json
 
 
 def tranform_stage_optical(x, y, ratio, offset=[0, 0]):
@@ -26,36 +27,43 @@ def decode_b64png(s, imshape):
 
 def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname, measure=True):
 
-    fout = open(log_fname, 'w+')
     if not dummy:
         rc.save_coords(coords_fname, xys, pos, [], [])
-
-        child = rc.initialise_and_login(config)
-        child.sendline('Begin')
-        child.expect("OK")
-        try:
-            for xyz in pos:
-                rc.acquirePixel(child, xyz, image_bounds, measure=measure)
-        except Exception as e:
-            print(e)
-            raise
-        child.sendline("End")
-        child.close()
+        rc.initialise_and_login(config)
+        try: 
+            rc.sendline('Begin')
+            rc.expect("OK")
+            try:
+                for xyz in pos:
+                    rc.acquirePixel(xyz, image_bounds, measure=measure)
+            except Exception as e:
+                print(e)
+                raise
+            rc.sendline("End")
+        finally:
+            rc.close()
     else:
         try:
             for xyz in pos:
-                child = ""
-                rc.acquirePixel(child, xyz, image_bounds, dummy=True)
+                rc.acquirePixel(xyz, image_bounds, dummy=True)
         except Exception as e:
             print(e)
             raise
     print('done')
 
-def getpos(config, log_fname=None, autofocus=True):
+    
+def getpos(config_fn, log_fname=None, autofocus=True, reset_light_to=255):
+    config = json.load(open(config_fn))
+    rc.initialise_and_login(config)
+    return rc.get_position(autofocus)
 
-    fout = open(log_fname, 'w+') if log_fname else None
-    child = rc.initialise_and_login(config)
-    try:
-        return rc.get_position(child, autofocus)
-    finally:
-        child.close()
+
+def stop_telnet(config_fn):
+    config = json.load(open(config_fn))
+    rc.initialise_and_login(config)
+    return rc.close(quit=True)
+
+def set_light(config_fn, value):
+    config = json.load(open(config_fn))
+    rc.initialise_and_login(config)
+    rc.set_light(value)

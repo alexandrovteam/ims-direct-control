@@ -129,7 +129,7 @@ class Acquisition():
         self.image_bounds = image_bounds
 
     def apply_subpattern(self):
-        psx, psy = np.max(self.subpattern_pixels, axis=1) + 1 # size of pixel grid
+        psx, psy = np.max(self.subpattern_pixels, axis=0) + 1 # size of pixel grid
 
         self.targets = [
             ((px * psx + pox, py * psy + poy), (cx + cox, cy + coy, cz))
@@ -141,11 +141,24 @@ class Acquisition():
         self.subpattern_pixels = [
             (1,1),
             (1,0),
-            ()
+            (2,0),
+            (2,1),
+            (2,2),
+            (1,2),
+            (0,2),
+            (0,1),
+            (0,0)
         ]
-        self.subpattern_coords = (np.array(self.subpattern_pixels) * [[spacing_x, spacing_y]])
+        self.subpattern_coords = (np.array(self.subpattern_pixels) * [[spacing_x, spacing_y]]).tolist()
+        self.apply_subpattern()
 
     def acquire(self, dataset_name, dummy=True, measure=True):
+        """ DEPRECATED - use generate_targets and acquire separately instead
+        :param dataset_name: output filename (should match .raw filename)
+        :param dummy: dummy run (True, False)
+        :param measure: True to measure, False to only send goto commands (True, False)
+        :return:
+        """
         print("Acquiring {} ({} pixels)".format(dataset_name, len(self.targets)))
         xys = np.asarray([t[0] for t in self.targets])
         pos = np.asarray([t[1] for t in self.targets])
@@ -340,9 +353,16 @@ class WellPlateGridAquisition(Acquisition):
     def generate_targets(self, wells_to_acquire, pixelsize_x, pixelsize_y,
                                     offset_x, offset_y,
                                     mask_function_name=None, area_function_name=None):
-
-        pixelsize_x *= self.subpattern_grid_size[0]
-        pixelsize_y *= self.subpattern_grid_size[1]
+        """ DEPRECATED - use generate_targets and acquire separately instead
+        :param wells_to_acquire: index (x,y) of wells to image
+        :param pixelsize_x: spatial separation in x (um)
+        :param pixelsize_y: spatial separation in y (um)
+        :param offset_x: (default=0) offset from 0,0 position for acquisition points in x (um)
+        :param offset_y: (default=0) offset from 0,0 position for acquisition points in y (um)
+        :param mask_function_name: None, 'circle', 'ellipse', 'rectangle'
+        :param area_function_name: None, 'left', 'upper', 'upper_left', etc.
+        :return:
+        """
 
         if mask_function_name is None:
             print(self.plate)
@@ -367,54 +387,20 @@ class WellPlateGridAquisition(Acquisition):
                 * self.area_function(area_function_name)(xv, yv, r, c)
             ] += 1
 
-        def make_subpattern(_x, _y):
-            sx, sy = self.subpattern_grid_size
-            ox, oy = self.subpattern_grid_offset
-            for (sc_x, sc_y), (sp_x, sp_y) in zip(self.subpattern_coords, self.subpattern_pixels):
-                pixel_x = (_x - x0) / pixelsize_x * sx + ox + sp_x
-                pixel_y = (_y - y0) / pixelsize_y * sy + oy + sp_y
-                pos_x = _x + offset_x + sc_x
-                pos_y = _y + offset_y + sc_y
-                pos_z = _z(pos_x, pos_y)[0]
-                yield (pixel_x, pixel_y), (pos_x, pos_y, pos_z)
-
         mask_labels = measure.label(mask, background=0)
         self.targets = []
         for ii in range(1, np.max(mask_labels) + 1):
             _xy = list([
-                coords
+                (
+                    ((_x - x0) / pixelsize_x, (_y - y0) / pixelsize_y),  # pixel index (x,y)
+                    (_x + offset_x, _y + offset_y, _z(_x, _y)[0])  # absolute position (x,y,z)
+                )
                 for _x, _y in zip(xv[mask_labels == ii].flatten(), yv[mask_labels == ii].flatten())
-                for coords in make_subpattern(_x, _y)
             ])
             self.targets.extend(_xy)
 
         print("total pixels: ", len(self.targets))
 
-    def acquire_wells(self,
-                      wells_to_acquire,
-                      dataset_name,
-                      dummy=True,
-                      pixelsize_x=50, pixelsize_y=50,
-                      offset_x = 0, offset_y=0,
-                      area_shape = None,
-                      area_mask = None,
-                      ):
-        """ DEPRECATED - use generate_targets and acquire separately instead
-        :param wells_to_acquire: index (x,y) of wells to image
-        :param dataset_name: output filename (should match .raw filename)
-        :param dummy: dummy run (True, False)
-        :param pixelsize_x: spatial separation in x (um)
-        :param pixelsize_y: spatial separation in y (um)
-        :param offset_x: (default=0) offset from 0,0 position for acquisition points in x (um)
-        :param offset_y: (default=0) offset from 0,0 position for acquisition points in y (um)
-        :param safety_box: (default=None) additional bounding box (um) to constrain measurements within motor travel region.
-        :return:
-        """
-        self.generate_targets(wells_to_acquire,
-                              pixelsize_x, pixelsize_y,
-                              offset_x, offset_y,
-                              area_shape, area_mask)
-        self.acquire(dataset_name=dataset_name, dummy=dummy)
 
 
 
