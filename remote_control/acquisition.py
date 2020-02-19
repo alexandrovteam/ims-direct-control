@@ -65,7 +65,7 @@ def coord_formatter(data_x, data_y, data_z):
 
     def format_coord(x,y):
         i = np.argmin((data_x - x) ** 2 + (data_y - y) ** 2)
-        return 'Cursor: x=%#.5g, y=%#.5g\nNearest: x=%#.5g, y=%#.5g, z=%#.5g' % (x, y, data_x[i], data_y[i], data_z[i])
+        return 'Cursor: x=%#.5g, y=%#.5g\nNearest: #%i x=%#.5g, y=%#.5g, z=%#.5g' % (x, y, i, data_x[i], data_y[i], data_z[i])
 
     return format_coord
 
@@ -201,6 +201,7 @@ class Acquisition():
         plt.axis('equal')
         plt.title("Output coordinates")
         plt.gca().invert_yaxis()
+        plt.gca().format_coord = coord_formatter([xy[0] for xy in xys], [xy[1] for xy in xys], [0 for xy in xys])
         plt.show()
 
         plt.figure()
@@ -212,7 +213,6 @@ class Acquisition():
         )
         plt.axis('equal')
         plt.title("Physical shape")
-        plt.gca().invert_yaxis()
         plt.gca().format_coord = coord_formatter([xy[0] for xy in pos], [xy[1] for xy in pos], [xy[2] for xy in pos])
         plt.colorbar()
         plt.show()
@@ -390,15 +390,15 @@ class WellPlateGridAquisition(Acquisition):
                 * self.area_function(area_function_name)(xv, yv, r, c)
             ] += 1
 
-        mask_labels = measure.label(mask, background=0)
+        mask_labels = measure.label(mask[::-1, :], background=0)[::-1, :]
         self.targets = []
         for ii in range(1, np.max(mask_labels) + 1):
             _xy = list([
                 (
-                    ((_x - x0) / pixelsize_x, (_y - y0) / pixelsize_y),  # pixel index (x,y)
+                    ((_x - x0) / pixelsize_x, (ymax - _y - y0) / pixelsize_y),  # pixel index (x,y)
                     (_x + offset_x, _y + offset_y, _z(_x, _y)[0])  # absolute position (x,y,z)
                 )
-                for _x, _y in zip(xv[mask_labels == ii].flatten(), yv[mask_labels == ii].flatten())
+                for _x, _y in zip(xv[mask_labels == ii].flatten(), yv[mask_labels == ii].flatten()[::-1])
             ])
             self.targets.extend(_xy)
 
