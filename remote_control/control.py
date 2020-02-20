@@ -1,17 +1,25 @@
 import sys, time
+from io import TextIOWrapper
 from telnetlib import Telnet
 from datetime import datetime
+from typing import Optional
 
-telnet = None
-logfile = None
+telnet: Optional[Telnet] = None
+logfile: Optional[TextIOWrapper] = None
 
 
-def expect(expected, timeout=5):
+class ExpectException(Exception):
+    pass
+
+
+def expect(expected, timeout=30):
     if isinstance(expected, str):
         expected = [expected.encode()]
     idx, match, data = telnet.expect(expected, timeout)
     data = str(data, 'utf-8')
     logfile.write(datetime.now().isoformat() + ': ' + data + '\r\n')
+    if match is None:
+        raise ExpectException(f'Did not receive expected "${expected} after {timeout} seconds')
     return data
 
 
@@ -35,7 +43,7 @@ def flush_output_buffer(delay=0.01):
 
     
 def close(quit=False):
-    global telnet
+    global telnet, logfile
     if quit:
         sendline('Quit')
     telnet.close()
@@ -63,8 +71,8 @@ def initialise_and_login(config):
 
             try:
                 expect('Benutzername:', timeout=0.005)
-                raise Error('Login failed')
-            except:
+                raise Exception('Login failed')
+            except ExpectException:
                 pass # No more login prompt = success
         except:
             telnet.close()

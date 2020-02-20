@@ -1,3 +1,8 @@
+from datetime import datetime
+from functools import wraps
+from inspect import getcallargs
+from pathlib import Path
+
 import numpy as np
 import json
 from scipy import interpolate
@@ -5,7 +10,7 @@ from scipy.spatial.distance import euclidean, cosine
 from skimage import measure
 
 from remote_control.control import save_coords
-from remote_control.utils import acquire
+from remote_control.utils import acquire, NpEncoder
 
 SLIDES = {
         "spot30":
@@ -88,18 +93,26 @@ def grid_skew(coords):
     return np.rad2deg(np.arcsin(grid_skew))
 
 
+def _record_args(func):
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        if getattr(self, '_recorded_args', None) is None:
+            self._recorded_args = {'__class__': self.__class__.__name__}
+        all_args = getcallargs(func, self, *args, **kwargs)
+        all_args.pop('self', None)
+
+        self._recorded_args[func.__name__] = all_args
+        return func(self, *args, **kwargs)
+    return wrapper
+
 class Acquisition():
-    def __init__(self, config_fn, datadir, log_fname=""):
-        self.parse_config(config_fn)
-        self.log_fname = log_fname
+    def __init__(self, config_fn, datadir):
+        self.config = json.load(open(config_fn))
         self.datadir = datadir
         self.targets = []
 
         self.subpattern_coords = [(0, 0)] # Physical X/Y offsets (in µm)
         self.subpattern_pixels = [(0, 0)] # Pixel-space X/Y offsets
-
-    def parse_config(self, config_fn):
-        self.config = json.load(open(config_fn))
 
     def coords_fname(self, dataset_name):
         return dataset_name + 'positions.json'
@@ -124,21 +137,24 @@ class Acquisition():
         pos = np.asarray([t[1] for t in self.targets])
         save_coords(filename, xys, pos, [], [])
 
-
+    @_record_args
     def set_image_bounds(self, image_bounds):
         self.image_bounds = image_bounds
 
-    def apply_subpattern(self):
-        psx, psy = np.max(self.subpattern_pixels, axis=0) + 1 # size of pixel grid
+    @_record_args
+    def apply_subpattern(self, subpattern_pixels, subpattern_coords, size_x, size_y):
+        self.subpattern_pixels = subpattern_pixels
+        self.subpattern_coords = subpattern_coords
 
         self.targets = [
-            ((px * psx + pox, py * psy + poy), (cx + cox, cy + coy, cz))
+            ((px * size_x + pox, py * size_y + poy), (cx + cox, cy + coy, cz))
             for (px, py), (cx, cy, cz) in self.targets
             for (pox, poy), (cox, coy) in zip(self.subpattern_pixels, self.subpattern_coords)
         ]
 
+    @_record_args
     def apply_spiral_subpattern(self, spacing_x, spacing_y):
-        self.subpattern_pixels = [
+        subpattern_pixels = [
             (1,1),
             (1,0),
             (2,0),
@@ -149,9 +165,19 @@ class Acquisition():
             (0,1),
             (0,0)
         ]
-        self.subpattern_coords = (np.array(self.subpattern_pixels) * [[spacing_x, spacing_y]]).tolist()
-        self.apply_subpattern()
+        subpattern_coords = (np.array(subpattern_pixels) * [[spacing_x, spacing_y]]).tolist()
+        psx, psy = np.max(subpattern_pixels, axis=0) + 1 # size of pixel grid
 
+        self.apply_subpattern(subpattern_pixels, subpattern_coords, psx, psy)
+
+    def _save_recorded_args(self, suffix=''):
+        if self.config.get('saved_parameters') and getattr(self, '_recorded_args', None) is not None:
+            base_path = Path(self.config.get('saved_parameters'))
+            base_path.mkdir(parents=True, exist_ok=True)
+            f = base_path / f'{datetime.now().isoformat().replace(":","_")}{suffix}.json'
+            json.dump(self._recorded_args, f.open('w'), indent=2, cls=NpEncoder)
+
+    @_record_args
     def acquire(self, dataset_name, dummy=True, measure=True):
         """ DEPRECATED - use generate_targets and acquire separately instead
         :param dataset_name: output filename (should match .raw filename)
@@ -162,9 +188,11 @@ class Acquisition():
         print("Acquiring {} ({} pixels)".format(dataset_name, len(self.targets)))
         xys = np.asarray([t[0] for t in self.targets])
         pos = np.asarray([t[1] for t in self.targets])
+        self._recorded_args['raw_xys'] = xys.tolist()
+        self._recorded_args['raw_pos'] = pos.tolist()
+        self._save_recorded_args('_dummy' if dummy else '_moveonly' if not measure else '_real')
         acquire(
             self.config,
-            self.log_fname,
             xys,
             pos,
             self.image_bounds,
@@ -219,6 +247,7 @@ class Acquisition():
 
 
 class RectangularAquisition(Acquisition):
+    @_record_args
     def generate_targets(self, calibration_positions, target_positions,
                          x_pitch=None, y_pitch=None,
                          x_size=None, y_size=None,
@@ -284,6 +313,7 @@ class RectangularAquisition(Acquisition):
 
 
 class WellPlateGridAquisition(Acquisition):
+    @_record_args
     def __init__(self, plate_type, *args, **kwargs):
         if isinstance(plate_type, dict):
             self.plate_type = plate_type['name']
@@ -294,6 +324,7 @@ class WellPlateGridAquisition(Acquisition):
         self.tform = [] #transformation matrix
         super().__init__(*args, **kwargs)
 
+    @_record_args
     def calibrate(self, instrument_positions, wells, ref_loc='centre'):
         """
         :param instrument_positions: positions of known locations from MCP (um). This should be the centre of the well.
@@ -310,32 +341,32 @@ class WellPlateGridAquisition(Acquisition):
             A, res, rank, s = np.linalg.lstsq(X, Y, rcond=None)
             return A
         instrument_positions, wells = map(lambda x: np.asarray(x), [instrument_positions, wells])
-        reference_positions = self.well_coord(wells, ref_loc)
+        reference_positions = self._well_coord(wells, ref_loc)
         self.tform  = get_transform(reference_positions, instrument_positions)
-        print("RMS error:", rms(instrument_positions - self.transform(reference_positions)))
+        print("RMS error:", rms(instrument_positions - self._transform(reference_positions)))
 
     @property
-    def origin(self):
+    def _origin(self):
         return np.asarray([self.plate["spot_size"][0]/2., self.plate["spot_size"][1]/2., 0])
 
-    def well_coord(self, wells, location):
+    def _well_coord(self, wells, location):
         LOCATIONS= ["centre", "top_left", "top_right", "bottom_left", "bottom_right"]
         TRANSFORMS = {
-            "centre":       lambda wellixs: spacing * wellixs + self.origin,
+            "centre":       lambda wellixs: spacing * wellixs + self._origin,
             "top_left":     lambda wellixs: spacing * wellixs,
-            "top_right":    lambda wellixs: spacing * wellixs + np.asarray([2*self.origin[0], 0, 0]),
-            "bottom_left":  lambda wellixs: spacing * wellixs + np.asarray([0, 2*self.origin[1], 0]),
-            "bottom_right": lambda wellixs: spacing * wellixs + 2*self.origin
+            "top_right":    lambda wellixs: spacing * wellixs + np.asarray([2 * self._origin[0], 0, 0]),
+            "bottom_left":  lambda wellixs: spacing * wellixs + np.asarray([0, 2 * self._origin[1], 0]),
+            "bottom_right": lambda wellixs: spacing * wellixs + 2*self._origin
         }
         assert location in LOCATIONS, "location not in {}".format(LOCATIONS)
         spacing = np.asarray(self.plate["spot_spacing"])
         transform = TRANSFORMS[location]
         return transform(np.asarray(wells))
 
-    def transform(self, vect):
+    def _transform(self, vect):
         return unpad(np.dot(pad(vect), self.tform))
 
-    def get_measurement_bounds(self, wells_to_acquire):
+    def _get_measurement_bounds(self, wells_to_acquire):
         wells_to_acquire = np.asarray(wells_to_acquire)
         mins = np.min(wells_to_acquire, axis=0)
         maxs = np.max(wells_to_acquire, axis=0)
@@ -346,14 +377,14 @@ class WellPlateGridAquisition(Acquisition):
             [maxs[0], maxs[1], 0]
         ]
         locations = ["top_left", "top_right", "bottom_left", "bottom_right"]
-        t = [self.transform(self.well_coord(e,l).reshape(1,-1))[0] for e,l in zip(extremes, locations)]
+        t = [self._transform(self._well_coord(e, l).reshape(1, -1))[0] for e, l in zip(extremes, locations)]
         return np.asarray(t)
 
-
+    @_record_args
     def generate_targets(self, wells_to_acquire, pixelsize_x, pixelsize_y,
                                     offset_x, offset_y,
                                     mask_function_name=None, area_function_name=None):
-        """ DEPRECATED - use generate_targets and acquire separately instead
+        """
         :param wells_to_acquire: index (x,y) of wells to image
         :param pixelsize_x: spatial separation in x (um)
         :param pixelsize_y: spatial separation in y (um)
@@ -368,7 +399,7 @@ class WellPlateGridAquisition(Acquisition):
             print(self.plate)
             mask_function_name = self.plate['shape']
 
-        measurement_bounds = self.get_measurement_bounds(wells_to_acquire)
+        measurement_bounds = self._get_measurement_bounds(wells_to_acquire)
 
         x0, y0 = measurement_bounds.min(axis=0)[0:2]
         xmax, ymax = measurement_bounds.max(axis=0)[0:2]
@@ -381,7 +412,7 @@ class WellPlateGridAquisition(Acquisition):
         r = [_d*1000 for _d in self.plate["spot_size"]]
 
         for well in wells_to_acquire:
-            c = self.transform(self.well_coord(np.asarray([well[0], well[1], 0]).reshape(1, -1), 'centre'))[0]
+            c = self._transform(self._well_coord(np.asarray([well[0], well[1], 0]).reshape(1, -1), 'centre'))[0]
             c[0] = np.round(c[0] / pixelsize_x) * pixelsize_x
             c[1] = np.round(c[1] / pixelsize_y) * pixelsize_y
 

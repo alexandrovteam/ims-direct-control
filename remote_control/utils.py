@@ -25,7 +25,7 @@ def decode_b64png(s, imshape):
     return q.reshape(imshape)
 
 
-def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname, measure=True):
+def acquire(config, xys, pos, image_bounds, dummy, coords_fname, measure=True):
 
     if not dummy:
         rc.save_coords(coords_fname, xys, pos, [], [])
@@ -39,6 +39,7 @@ def acquire(config, log_fname, xys, pos, image_bounds, dummy, coords_fname, meas
             except Exception as e:
                 print(e)
                 raise
+            rc.flush_output_buffer(3) # Wait before ending - it seems like a few commands get queued, and sending End immediately stops them
             rc.sendline("End")
         finally:
             rc.close()
@@ -67,3 +68,14 @@ def set_light(config_fn, value):
     config = json.load(open(config_fn))
     rc.initialise_and_login(config)
     rc.set_light(value)
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            return super(NpEncoder, self).default(obj)
