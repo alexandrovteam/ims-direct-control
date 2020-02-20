@@ -34,21 +34,21 @@ SLIDES = {
          }
 
 MASK_FUNCTIONS = {
-        "circle": lambda xv, yv, r, c: np.square(xv - c[0])/((r[0]/2)**2) + np.square(yv - c[1])/((r[0]/2)** 2) < 1,
-        "ellipse": lambda xv, yv, r, c: np.square(xv - c[0])/(r[0]/2)**2 + np.square(yv - c[1])/(r[1]/2) ** 2 < 1,
-        "rectangle": lambda xv, yv, r, c: (xv < c[0] + r[0]/2.) & (xv > c[0] - r[0]/2.) & (yv < c[1] + r[1]/2.) & (yv > c[1] - r[1]/2.),
+    "circle": lambda xv, yv, r, c: np.square(xv - c[0])/((r[0]/2)**2) + np.square(yv - c[1])/((r[0]/2)** 2) < 1,
+    "ellipse": lambda xv, yv, r, c: np.square(xv - c[0])/(r[0]/2)**2 + np.square(yv - c[1])/(r[1]/2) ** 2 < 1,
+    "rectangle": lambda xv, yv, r, c: (xv < c[0] + r[0]/2.) & (xv > c[0] - r[0]/2.) & (yv < c[1] + r[1]/2.) & (yv > c[1] - r[1]/2.),
 }
 
 AREA_FUNCTIONS = {
-    None: lambda xv, yv, r, c: True,
-    "left": lambda xv, yv, r, c: (xv < c[0]),
-    "right": lambda xv, yv, r, c: (xv > c[0]),
-    "upper": lambda xv, yv, r, c: (yv > c[1]),
-    "lower": lambda xv, yv, r, c: (yv < c[1]),
-    "upper_left": lambda xv, yv, r, c: (xv < c[0]) & (yv > c[1]),
-    "upper_right": lambda xv, yv, r, c: (xv > c[0]) & (yv > c[1]),
-    "lower_left": lambda xv, yv, r, c: (xv < c[0]) & (yv < c[1]),
-    "lower_right": lambda xv, yv, r, c: (xv > c[0]) & (yv < c[1]),
+    None: lambda xv, yv, r, c, m: True,
+    "left": lambda xv, yv, r, c, m: (xv <= c[0] - m),
+    "right": lambda xv, yv, r, c, m: (xv > c[0] + m),
+    "upper": lambda xv, yv, r, c, m: (yv > c[1] + m),
+    "lower": lambda xv, yv, r, c, m: (yv <= c[1] - m),
+    "upper_left": lambda xv, yv, r, c, m: (xv <= c[0] - m) & (yv > c[1] + m),
+    "upper_right": lambda xv, yv, r, c, m: (xv > c[0] + m) & (yv > c[1] + m),
+    "lower_left": lambda xv, yv, r, c, m: (xv <= c[0] - m) & (yv <= c[1] - m),
+    "lower_right": lambda xv, yv, r, c, m: (xv > c[0] + m) & (yv <= c[1] - m),
 }
 
 
@@ -382,8 +382,9 @@ class WellPlateGridAquisition(Acquisition):
 
     @_record_args
     def generate_targets(self, wells_to_acquire, pixelsize_x, pixelsize_y,
-                                    offset_x, offset_y,
-                                    mask_function_name=None, area_function_name=None):
+                         offset_x, offset_y,
+                         mask_function_name=None, area_function_name=None,
+                         area_function_margin=0):
         """
         :param wells_to_acquire: index (x,y) of wells to image
         :param pixelsize_x: spatial separation in x (um)
@@ -392,6 +393,7 @@ class WellPlateGridAquisition(Acquisition):
         :param offset_y: (default=0) offset from 0,0 position for acquisition points in y (um)
         :param mask_function_name: None, 'circle', 'ellipse', 'rectangle'
         :param area_function_name: None, 'left', 'upper', 'upper_left', etc.
+        :param area_function_margin: distance (um) between opposing areas defined by area function
         :return:
         """
 
@@ -418,7 +420,7 @@ class WellPlateGridAquisition(Acquisition):
 
             mask[
                 self.mask_function(mask_function_name)(xv, yv, r, c)
-                * self.area_function(area_function_name)(xv, yv, r, c)
+                * self.area_function(area_function_name)(xv, yv, r, c, area_function_margin / 2)
             ] += 1
 
         mask_labels = measure.label(mask[::-1, :], background=0)[::-1, :]
