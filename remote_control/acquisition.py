@@ -34,21 +34,21 @@ SLIDES = {
          }
 
 MASK_FUNCTIONS = {
-    "circle": lambda xv, yv, r, c: np.square(xv - c[0])/((r[0]/2)**2) + np.square(yv - c[1])/((r[0]/2)** 2) < 1,
+    "circle": lambda xv, yv, r, c: np.square(xv - c[0])/((r[0]/2)**2) + np.square(yv - c[1])/((r[0]/2)** 2) <= 1,
     "ellipse": lambda xv, yv, r, c: np.square(xv - c[0])/(r[0]/2)**2 + np.square(yv - c[1])/(r[1]/2) ** 2 < 1,
     "rectangle": lambda xv, yv, r, c: (xv < c[0] + r[0]/2.) & (xv > c[0] - r[0]/2.) & (yv < c[1] + r[1]/2.) & (yv > c[1] - r[1]/2.),
 }
 
 AREA_FUNCTIONS = {
     None: lambda xv, yv, r, c, m: True,
-    "left": lambda xv, yv, r, c, m: (xv <= c[0] - m),
-    "right": lambda xv, yv, r, c, m: (xv > c[0] + m),
-    "upper": lambda xv, yv, r, c, m: (yv > c[1] + m),
-    "lower": lambda xv, yv, r, c, m: (yv <= c[1] - m),
-    "upper_left": lambda xv, yv, r, c, m: (xv <= c[0] - m) & (yv > c[1] + m),
-    "upper_right": lambda xv, yv, r, c, m: (xv > c[0] + m) & (yv > c[1] + m),
-    "lower_left": lambda xv, yv, r, c, m: (xv <= c[0] - m) & (yv <= c[1] - m),
-    "lower_right": lambda xv, yv, r, c, m: (xv > c[0] + m) & (yv <= c[1] - m),
+    "left": lambda xv, yv, r, c, m: (xv < c[0] - m),
+    "right": lambda xv, yv, r, c, m: (xv >= c[0] + m),
+    "upper": lambda xv, yv, r, c, m: (yv >= c[1] + m),
+    "lower": lambda xv, yv, r, c, m: (yv < c[1] - m),
+    "upper_left": lambda xv, yv, r, c, m: (xv < c[0] - m) & (yv >= c[1] + m),
+    "upper_right": lambda xv, yv, r, c, m: (xv >= c[0] + m) & (yv >= c[1] + m),
+    "lower_left": lambda xv, yv, r, c, m: (xv < c[0] - m) & (yv < c[1] - m),
+    "lower_right": lambda xv, yv, r, c, m: (xv >= c[0] + m) & (yv < c[1] - m),
 }
 
 
@@ -384,7 +384,7 @@ class WellPlateGridAquisition(Acquisition):
     def generate_targets(self, wells_to_acquire, pixelsize_x, pixelsize_y,
                          offset_x, offset_y,
                          mask_function_name=None, area_function_name=None,
-                         area_function_margin=0):
+                         area_function_margin=0, shared_grid=False):
         """
         :param wells_to_acquire: index (x,y) of wells to image
         :param pixelsize_x: spatial separation in x (um)
@@ -394,6 +394,12 @@ class WellPlateGridAquisition(Acquisition):
         :param mask_function_name: None, 'circle', 'ellipse', 'rectangle'
         :param area_function_name: None, 'left', 'upper', 'upper_left', etc.
         :param area_function_margin: distance (um) between opposing areas defined by area function
+        :param shared_grid: if True, one big grid is used for the whole acquisition,
+                            so pixels are perfectly evenly spaced, even between wells.
+                            This allows the optical image to perfectly match the ablated area
+                            if False, each well gets its own pixel grid. This allows a better fit
+                            for the well shape, but may physically be up to 1 pixelsize away from
+                            the optically registered point.
         :return:
         """
 
@@ -401,29 +407,54 @@ class WellPlateGridAquisition(Acquisition):
             print(self.plate)
             mask_function_name = self.plate['shape']
 
+        def well_mask(c, xv, yv):
+            r = [_d * 1000 for _d in self.plate["spot_size"]]
+            if np.round(r[0] / pixelsize_x):
+                # odd number of pixels wide, aim for the center of a pixel
+                c[0] = (np.round(c[0] / pixelsize_x + 0.5) - 0.5) * pixelsize_x
+            else:
+                c[0] = np.round(c[0] / pixelsize_x) * pixelsize_x
+            if np.round(r[1] / pixelsize_y):
+                # odd number of pixels tall, aim for the center of a pixel
+                c[1] = (np.round(c[1] / pixelsize_y + 0.5) - 0.5) * pixelsize_y
+            else:
+                c[1] = np.round(c[1] / pixelsize_y) * pixelsize_y
+
+            return (
+                self.mask_function(mask_function_name)(xv, yv, r, c)
+                * self.area_function(area_function_name)(xv, yv, r, c, area_function_margin / 2)
+            )
+
+        if shared_grid:
+            self._generate_targets_single_grid(
+                wells_to_acquire, pixelsize_x, pixelsize_y,
+                offset_x, offset_y, well_mask
+            )
+        else:
+            self._generate_targets_grid_per_well(
+                wells_to_acquire, pixelsize_x, pixelsize_y,
+                offset_x, offset_y, well_mask
+            )
+
+    def _generate_targets_single_grid(self, wells_to_acquire, pixelsize_x, pixelsize_y,
+                                      offset_x, offset_y, well_mask):
+
         measurement_bounds = self._get_measurement_bounds(wells_to_acquire)
 
         x0, y0 = measurement_bounds.min(axis=0)[0:2]
         xmax, ymax = measurement_bounds.max(axis=0)[0:2]
         x = np.arange(x0, xmax, pixelsize_x)
-        y = np.arange(y0, ymax, pixelsize_y)
+        y = np.arange(y0, ymax, pixelsize_y)[::-1]
 
         _z = interpolate.interp2d(measurement_bounds[:, 0], measurement_bounds[:, 1], measurement_bounds[:, 2])
         xv, yv = np.meshgrid(x, y)
         mask = np.zeros(xv.shape)
-        r = [_d*1000 for _d in self.plate["spot_size"]]
 
         for well in wells_to_acquire:
-            c = self._transform(self._well_coord(np.asarray([well[0], well[1], 0]).reshape(1, -1), 'centre'))[0]
-            c[0] = np.round(c[0] / pixelsize_x) * pixelsize_x
-            c[1] = np.round(c[1] / pixelsize_y) * pixelsize_y
+            c = self._transform(self._well_coord([[well[0], well[1], 0]], 'centre'))[0]
+            mask[well_mask(c, xv, yv)] += 1
 
-            mask[
-                self.mask_function(mask_function_name)(xv, yv, r, c)
-                * self.area_function(area_function_name)(xv, yv, r, c, area_function_margin / 2)
-            ] += 1
-
-        mask_labels = measure.label(mask[::-1, :], background=0)[::-1, :]
+        mask_labels = measure.label(mask, background=0)
         self.targets = []
         for ii in range(1, np.max(mask_labels) + 1):
             _xy = list([
@@ -431,12 +462,46 @@ class WellPlateGridAquisition(Acquisition):
                     ((_x - x0) / pixelsize_x, (ymax - _y - y0) / pixelsize_y),  # pixel index (x,y)
                     (_x + offset_x, _y + offset_y, _z(_x, _y)[0])  # absolute position (x,y,z)
                 )
-                for _x, _y in zip(xv[mask_labels == ii].flatten(), yv[mask_labels == ii].flatten()[::-1])
+                for _x, _y in zip(xv[mask_labels == ii].flatten(), yv[mask_labels == ii].flatten())
             ])
             self.targets.extend(_xy)
 
         print("total pixels: ", len(self.targets))
 
+    def _generate_targets_grid_per_well(self, wells_to_acquire, pixelsize_x, pixelsize_y,
+                                        offset_x, offset_y, well_mask):
 
+        measurement_bounds = self._get_measurement_bounds(wells_to_acquire)
 
+        x0, y0 = measurement_bounds.min(axis=0)[0:2]
+        xmax, ymax = measurement_bounds.max(axis=0)[0:2]
 
+        _z = interpolate.interp2d(measurement_bounds[:, 0], measurement_bounds[:, 1], measurement_bounds[:, 2])
+        spot_size = np.array(self.plate["spot_size"][:2]) * 1000
+        dim_x, dim_y = np.int64(np.round(spot_size / [pixelsize_x, pixelsize_y]))
+
+        def coords_for_well(well):
+            well_x, well_y = self._transform(self._well_coord([[*well, 0]], 'centre'))[0][:2] - spot_size / 2
+            return np.meshgrid(
+                np.arange(dim_x) * pixelsize_x + well_x,
+                (np.arange(dim_y) * pixelsize_y + well_y)[::-1]
+            )
+
+        template_xv, template_yv = np.meshgrid(
+            np.arange(dim_x) * pixelsize_x - spot_size[0] / 2,
+            np.arange(dim_y) * pixelsize_y - spot_size[1] / 2
+        )
+        mask = well_mask(np.array([0, 0, 0]), template_xv, template_yv)
+
+        self.targets = []
+        for well in wells_to_acquire:
+            xv, yv = coords_for_well(well)
+            self.targets.extend([
+                (
+                    ((_x - x0) / pixelsize_x, (ymax - _y - y0) / pixelsize_y),  # pixel index (x,y)
+                    (_x + offset_x, _y + offset_y, _z(_x, _y)[0])  # absolute position (x,y,z)
+                )
+                for _x, _y in zip(xv[mask].flatten(), yv[mask].flatten())
+            ])
+
+        print("total pixels: ", len(self.targets))
