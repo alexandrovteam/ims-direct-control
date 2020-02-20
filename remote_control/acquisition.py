@@ -42,13 +42,13 @@ MASK_FUNCTIONS = {
 AREA_FUNCTIONS = {
     None: lambda xv, yv, r, c, m: True,
     "left": lambda xv, yv, r, c, m: (xv < c[0] - m),
-    "right": lambda xv, yv, r, c, m: (xv >= c[0] + m),
-    "upper": lambda xv, yv, r, c, m: (yv >= c[1] + m),
+    "right": lambda xv, yv, r, c, m: (xv > c[0] + m),
+    "upper": lambda xv, yv, r, c, m: (yv > c[1] + m),
     "lower": lambda xv, yv, r, c, m: (yv < c[1] - m),
-    "upper_left": lambda xv, yv, r, c, m: (xv < c[0] - m) & (yv >= c[1] + m),
-    "upper_right": lambda xv, yv, r, c, m: (xv >= c[0] + m) & (yv >= c[1] + m),
+    "upper_left": lambda xv, yv, r, c, m: (xv < c[0] - m) & (yv > c[1] + m),
+    "upper_right": lambda xv, yv, r, c, m: (xv > c[0] + m) & (yv > c[1] + m),
     "lower_left": lambda xv, yv, r, c, m: (xv < c[0] - m) & (yv < c[1] - m),
-    "lower_right": lambda xv, yv, r, c, m: (xv >= c[0] + m) & (yv < c[1] - m),
+    "lower_right": lambda xv, yv, r, c, m: (xv > c[0] + m) & (yv < c[1] - m),
 }
 
 
@@ -489,7 +489,7 @@ class WellPlateGridAquisition(Acquisition):
 
         template_xv, template_yv = np.meshgrid(
             np.arange(dim_x) * pixelsize_x - spot_size[0] / 2,
-            np.arange(dim_y) * pixelsize_y - spot_size[1] / 2
+            (np.arange(dim_y) * pixelsize_y - spot_size[1] / 2)[::-1]
         )
         mask = well_mask(np.array([0, 0, 0]), template_xv, template_yv)
 
