@@ -223,6 +223,8 @@ class Acquisition():
         xys = np.asarray([t[0] for t in self.targets])
         pos = [t[1] for t in self.targets]
 
+        print("total pixels: ", len(self.targets))
+
         plt.figure()
         plt.plot([xy[0] for xy in xys], [xy[1] for xy in xys])
         plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys], s=3)
@@ -466,8 +468,6 @@ class WellPlateGridAquisition(Acquisition):
             ])
             self.targets.extend(_xy)
 
-        print("total pixels: ", len(self.targets))
-
     def _generate_targets_grid_per_well(self, wells_to_acquire, pixelsize_x, pixelsize_y,
                                         offset_x, offset_y, well_mask):
 
@@ -503,5 +503,3 @@ class WellPlateGridAquisition(Acquisition):
                 )
                 for _x, _y in zip(xv[mask].flatten(), yv[mask].flatten())
             ])
-
-        print("total pixels: ", len(self.targets))
