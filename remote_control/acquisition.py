@@ -106,7 +106,7 @@ def _record_args(func):
     return wrapper
 
 class Acquisition():
-    def __init__(self, config_fn, datadir):
+    def __init__(self, config_fn, datadir=None):
         self.config = json.load(open(config_fn))
         self.datadir = datadir
         self.targets = []

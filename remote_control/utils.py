@@ -26,6 +26,11 @@ def decode_b64png(s, imshape):
 
 
 def acquire(config, xys, pos, image_bounds, dummy, coords_fname, measure=True):
+    if image_bounds:
+        for x, y, *z in pos:
+            if not all([image_bounds[0][0] > x > image_bounds[1][0], image_bounds[0][1] < y < image_bounds[1][1]]):
+                print(x, y, [image_bounds[0][0] > x > image_bounds[1][0], image_bounds[0][1] < y < image_bounds[1][1]])
+                raise IOError('Pixel {} out of bounding box {}'.format((x,y), image_bounds))
 
     if not dummy:
         rc.save_coords(coords_fname, xys, pos, [], [])
@@ -35,7 +40,7 @@ def acquire(config, xys, pos, image_bounds, dummy, coords_fname, measure=True):
             rc.expect("OK")
             try:
                 for xyz in pos:
-                    rc.acquirePixel(xyz, image_bounds, measure=measure)
+                    rc.acquirePixel(xyz, measure=measure)
             except Exception as e:
                 print(e)
                 raise
@@ -46,7 +51,7 @@ def acquire(config, xys, pos, image_bounds, dummy, coords_fname, measure=True):
     else:
         try:
             for xyz in pos:
-                rc.acquirePixel(xyz, image_bounds, dummy=True)
+                rc.acquirePixel(xyz, dummy=True)
         except Exception as e:
             print(e)
             raise
