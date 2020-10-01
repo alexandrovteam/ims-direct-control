@@ -14,6 +14,7 @@ setup(name='remote_control',
           'scipy',
           'pexpect',
           'pyMSpec',
-          'matplotlib==2.0.2',
+          'matplotlib', #==2.0.2',
           'scikit-image',
+          'scikit-learn'
       ])

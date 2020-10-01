@@ -8,6 +8,7 @@ import json
 from scipy import interpolate
 from scipy.spatial.distance import euclidean, cosine
 from skimage import measure
+from sklearn.linear_model import LinearRegression
 
 from remote_control.control import save_coords
 from remote_control.utils import acquire, NpEncoder
@@ -514,3 +515,150 @@ class WellPlateGridAquisition(Acquisition):
                 )
                 for _x, _y in zip(xv[mask].flatten(), yv[mask].flatten())
             ])
+
+
+class AcquistionArea():
+    """
+    Class to define a rectangular acquisition area (Used by QueueAcquisition)
+    """
+    # @_record_args
+    def __init__(self, line_start, line_end, perpendicular, step_size_x, step_size_y, name=None):
+        self.ls = line_start
+        self.le = line_end
+        self.pp = perpendicular
+        self.ssx = step_size_x
+        self.ssy = step_size_y
+        self.name = name
+
+        # Compute grid size
+        self.res_x = int(np.ceil(abs(self.le[0] - self.ls[0]) / self.ssx))
+        self.res_y = int(np.ceil(abs(self.pp[1] - self.ls[1]) / self.ssy))
+        self.n_acquisitions = self.res_x * self.res_y
+        
+        self.targets = None
+    
+    def __repr__(self):
+        return f"{self.__class__.__name__}(name='{self.name}', res_x={self.res_x}, res_y={self.res_y}, n_acquisitions={self.n_acquisitions})"
+
+
+class QueueAquisition(Acquisition):
+    """
+    Acquistion type that allows queueing of rectangular areas for successive acquisition
+    """
+    @_record_args
+    def __init__(self, *args, **kwargs):
+        self.queue = []
+        super().__init__(*args, **kwargs)
+
+    def add_area(self, line_start, line_end, perpendicular, step_size_x, step_size_y, name=None):
+        """
+        Create and add an AcquisitionArea to the queue.
+        """
+        
+        area = AcquistionArea(line_start, line_end, perpendicular, step_size_x, step_size_y, name=name)
+        self.queue.append(area)
+        
+        return area
+
+    def clear_areas(self):
+        self.queue = []
+        self.targets = []
+
+    def plot_areas(self):
+        """
+        Plot acquisition areas.
+        """
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as patches
+
+        print("total areas:", len(self.queue))
+
+        safety_box = self.image_bounds
+        
+        fig = plt.figure()
+        
+        plt.plot(
+            [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0], safety_box[0][0]],
+            [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1], safety_box[1][1]],
+            "0.8",
+            linewidth=1
+        )
+
+        ax = fig.axes[0]
+        for idx, area in enumerate(self.queue):
+            g = patches.Rectangle(
+                (area.ls[0], area.pp[1]),
+                width = area.le[0]-area.ls[0], 
+                height = area.ls[1]-area.pp[1],
+                fill = False,
+                edgecolor = "C0",
+                alpha=.5,
+                hatch="///"
+            )
+            ax.add_patch(g)
+            plt.annotate(
+                text=idx,
+                xy=(area.ls[0] - (area.ls[0]-area.le[0])/2,
+                    area.ls[1] - (area.ls[1]-area.pp[1])/2),
+                ha="center",
+                va="center",
+                c="C0",
+                fontsize=12
+            )
+            if area.name:
+                plt.annotate(area.name, area.ls[0:2], va="bottom", ha="right")
+
+        plt.axis('equal')
+
+        plt.title("Acquistion areas")
+        plt.show()
+    
+    @_record_args
+    def generate_targets(self, zigzag=False):
+        """Create the targets from queued areas.
+
+        Keyword arguments:
+        zigzag -- scan each even-numbered row in reverse instead of jumping back to the row start (default False)
+        
+        """
+        
+        origin = self.image_bounds[1] # Pixel indices will be relative to top-left
+        self.targets = []
+        
+        for area in self.queue:
+
+            fixpoints = np.asarray([area.ls, area.le, area.pp])
+
+            # Fit linear model to fixpoints to create 3D plane
+            lr = LinearRegression()
+            plane = lr.fit(fixpoints[:, :2], fixpoints[:, 2]) # fit to LS, LE, PP
+
+            # Create XY coordinates for targets
+            target_xs, target_ys = np.meshgrid(
+                np.arange(
+                    *np.sort([area.ls[0], area.le[0]]),
+                    area.ssx),
+                np.arange(
+                    *np.sort([area.ls[1], area.pp[1]])[::-1], # invert since we scan top to bottom
+                    area.ssy * -1
+                )
+            )
+
+            if zigzag:
+                target_xs[1::2, :] = target_xs[1::2, ::-1]
+
+            target_xys = np.stack([target_xs.flatten(), target_ys.flatten()], -1)
+            target_zs = plane.predict(target_xys)
+
+            pixel_indices = target_xys - np.array(origin) # make pixel indices relative to top-left corner
+            pixel_indices *= [1, -1]
+
+            area_targets = [
+                (
+                    tuple(px_index),
+                    (x, y, z)
+                ) for px_index, x, y, z in zip(pixel_indices, *target_xys.T, target_zs)
+            ]
+            
+            area.targets = area_targets
+            self.targets.extend(area_targets)
