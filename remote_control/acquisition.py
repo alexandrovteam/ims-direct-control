@@ -217,7 +217,10 @@ class Acquisition():
                         if cx < mask.shape[0] and cy < mask.shape[1] and mask[cx, cy]]
         print(f'Number of pixels after mask: {len(self.targets)}')
 
-    def plot_targets(self):
+    def plot_targets(self, annotate=False):
+        """ Plot output data coordinates and physical coordinates.
+        :param annotate: annotate start and stop (True, False)
+        """
         import matplotlib.pyplot as plt
         safety_box = self.image_bounds
         xys = np.asarray([t[0] for t in self.targets])
@@ -228,6 +231,14 @@ class Acquisition():
         plt.figure()
         plt.plot([xy[0] for xy in xys], [xy[1] for xy in xys])
         plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys], s=3)
+
+        # Mark start and stop
+        if annotate:
+            plt.scatter(*xys[0], c=".2", marker="x")
+            plt.scatter(*xys[-1], c=".2", marker="x")
+            plt.annotate("START", xys[0], c=".2", xytext = (-2, 2), textcoords="offset pixels", va="bottom", ha="right")
+            plt.annotate("STOP", xys[-1], c=".2", xytext = (3, -3), textcoords="offset pixels", va="top", ha="left")
+
         plt.axis('equal')
         plt.title("Output coordinates")
         plt.gca().invert_yaxis()
@@ -237,8 +248,8 @@ class Acquisition():
         plt.figure()
         plt.scatter([xy[0] for xy in pos], [xy[1] for xy in pos], c=[xy[2] for xy in pos], s=1)
         plt.plot(
-            [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0]],
-            [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1]],
+            [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0], safety_box[0][0]],
+            [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1], safety_box[1][1]],
             "--r"
         )
         plt.axis('equal')
