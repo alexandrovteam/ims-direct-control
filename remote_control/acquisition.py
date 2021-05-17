@@ -9,6 +9,7 @@ from scipy import interpolate
 from scipy.spatial.distance import euclidean, cosine
 from skimage import measure
 from sklearn.linear_model import LinearRegression
+from sklearn.utils.validation import check_is_fitted
 
 from remote_control.control import save_coords
 from remote_control.utils import acquire, NpEncoder
@@ -218,9 +219,11 @@ class Acquisition():
                         if cx < mask.shape[0] and cy < mask.shape[1] and mask[cx, cy]]
         print(f'Number of pixels after mask: {len(self.targets)}')
 
-    def plot_targets(self, annotate=False):
+    def plot_targets(self, annotate=False, show=True):
         """ Plot output data coordinates and physical coordinates.
-        :param annotate: annotate start and stop (True, False)
+        :param annotate: bool, whether to annotate start and stop.
+        :param show: bool, whether to show the plots, if False return it instead.
+        :return: a tuple of two plt.Figure objects containing the plots if show == False.
         """
         import matplotlib.pyplot as plt
         safety_box = self.image_bounds
@@ -229,7 +232,7 @@ class Acquisition():
 
         print("total pixels: ", len(self.targets))
 
-        plt.figure()
+        path_fig = plt.figure()
         plt.plot([xy[0] for xy in xys], [xy[1] for xy in xys])
         plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys], s=3)
 
@@ -244,9 +247,10 @@ class Acquisition():
         plt.title("Output coordinates")
         plt.gca().invert_yaxis()
         plt.gca().format_coord = coord_formatter([xy[0] for xy in xys], [xy[1] for xy in xys], [0 for xy in xys])
-        plt.show()
+        if show:
+            plt.show()
 
-        plt.figure()
+        pos_fig = plt.figure()
         plt.scatter([xy[0] for xy in pos], [xy[1] for xy in pos], c=[xy[2] for xy in pos], s=1)
         plt.plot(
             [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0], safety_box[0][0]],
@@ -257,7 +261,12 @@ class Acquisition():
         plt.title("Physical shape")
         plt.gca().format_coord = coord_formatter([xy[0] for xy in pos], [xy[1] for xy in pos], [xy[2] for xy in pos])
         plt.colorbar()
-        plt.show()
+        
+        if show:
+            plt.show()
+        else:
+            return path_fig, pos_fig
+
 
 
 class RectangularAquisition(Acquisition):
@@ -564,9 +573,13 @@ class QueueAquisition(Acquisition):
         self.queue = []
         self.targets = []
 
-    def plot_areas(self):
+    def plot_areas(self, plot_labtek_wells=False, show=True):
         """
         Plot acquisition areas.
+
+        :param plot_labtek_wells: bool, whether to include a 2x4 well grid into the plot starting from top left image bound.
+        :param show: bool, whether to show the plot, if False return it instead.
+        :return: a plt.Figure object containing the plot if show == False
         """
         import matplotlib.pyplot as plt
         import matplotlib.patches as patches
@@ -581,10 +594,35 @@ class QueueAquisition(Acquisition):
             [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0], safety_box[0][0]],
             [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1], safety_box[1][1]],
             "0.8",
+            linestyle=":",
             linewidth=1
         )
 
         ax = fig.axes[0]
+
+        # This is hard-coded badness. Don't!
+        if plot_labtek_wells:
+            origin_x, origin_y = self.image_bounds[1]
+            well_w, well_h = 7000, 9000
+            ctc_x, ctc_y = 10500, 12500
+
+            for col_idx in range(2):
+                for row_idx in range(4):
+                    g = patches.Rectangle(
+                        (
+                            origin_x + (ctc_x * col_idx), 
+                            origin_y - (ctc_y * row_idx)
+                        ),
+                        width = well_w, 
+                        height = -well_h,
+                        fill = False,
+                        edgecolor = "0.8",
+                        linewidth = 1
+                    )
+                    ax.add_patch(g)
+                    
+
+
         for idx, area in enumerate(self.queue):
             g = patches.Rectangle(
                 (area.ls[0], area.pp[1]),
@@ -593,9 +631,10 @@ class QueueAquisition(Acquisition):
                 fill = False,
                 edgecolor = "C0",
                 alpha=.5,
-                hatch="///"
+                hatch="////"
             )
             ax.add_patch(g)
+
             plt.annotate(
                 text=idx,
                 xy=(area.ls[0] - (area.ls[0]-area.le[0])/2,
@@ -611,14 +650,19 @@ class QueueAquisition(Acquisition):
         plt.axis('equal')
 
         plt.title("Acquistion areas")
-        plt.show()
+        
+        if show:
+            plt.show()
+        else:
+            return fig
+        
     
     @_record_args
-    def generate_targets(self, zigzag=False):
-        """Create the targets from queued areas.
+    def generate_targets(self, meander=False):
+        """
+        Create the targets from queued areas.
 
-        Keyword arguments:
-        zigzag -- scan each even-numbered row in reverse instead of jumping back to the row start (default False)
+        :param meander: whether to scan every even-numbered row in reverse instead of jumping back to the row start (default False)
         
         """
         
@@ -644,11 +688,110 @@ class QueueAquisition(Acquisition):
                 )
             )
 
-            if zigzag:
+            if meander:
                 target_xs[1::2, :] = target_xs[1::2, ::-1]
 
             target_xys = np.stack([target_xs.flatten(), target_ys.flatten()], -1)
             target_zs = plane.predict(target_xys)
+
+            pixel_indices = target_xys - np.array(origin) # make pixel indices relative to top-left corner
+            pixel_indices *= [1, -1]
+
+            area_targets = [
+                (
+                    tuple(px_index),
+                    (x, y, z)
+                ) for px_index, x, y, z in zip(pixel_indices, *target_xys.T, target_zs)
+            ]
+            
+            area.targets = area_targets
+            self.targets.extend(area_targets)
+
+
+class EasyQueueAquisition(QueueAquisition):
+    """
+    Acquistion type that allows queueing of rectangular areas for successive acquisition.
+    Works using a single plane generated from calibration points instead of using acquisition area-wise planes.
+    """
+    @_record_args
+    def __init__(self, *args, **kwargs):
+        self.queue = []
+        self.plane = LinearRegression()
+        super().__init__(*args, **kwargs)
+
+    def calibrate(self, points):
+        """
+        Fit 3D plane to calibration points to generate z positions.
+        :param points: calibration points, list of (x,y,z) tuples. Needs to have at least 3 points.
+        """
+
+        if len(points) < 3:
+            raise ValueError("Calibration requires at least three points")
+
+        points = np.asarray(points)
+        
+        self.plane.fit(points[:, :2], points[:, 2])
+        r2 = self.plane.score(points[:, :2], points[:, 2])
+
+        print(f"Fit r2 score: {r2:.3f}")
+
+    def add_area(self, xy, width, height, step_size_x, step_size_y, name=None):
+        """
+        Create and add an AcquisitionArea to the queue.
+        
+        :param xy: - xy coordinates of the top-left corner. (x, y) tuple.
+        :param width: - width of area.
+        :param height: - height of area.
+        """
+
+        x, y = xy
+
+        line_start = xy
+        line_end = (x+width, y)
+        perpendicular = (x, y-height) # NOTE super important to subtract here as y axis origin is on the bottom
+
+        area = AcquistionArea(line_start, line_end, perpendicular, step_size_x, step_size_y, name=name)
+        self.queue.append(area)
+        
+        return area
+    
+    @_record_args
+    def generate_targets(self, meander=False):
+        """
+        Create the targets from queued areas.
+
+        :param meander: scan each every-numbered row in reverse instead of jumping back to the row start (default False)
+        
+        """
+
+        check_is_fitted(
+            self.plane, 
+            attributes="coef_", 
+            msg="The acquisition series needs to be calibrated using the 'calibrate' function before generating targets!"
+        )
+
+        origin = self.image_bounds[1] # Pixel indices will be relative to top-left
+        self.targets = []
+        
+        for area in self.queue:
+
+            
+            # Create XY coordinates for targets
+            target_xs, target_ys = np.meshgrid(
+                np.arange(
+                    *np.sort([area.ls[0], area.le[0]]),
+                    area.ssx),
+                np.arange(
+                    *np.sort([area.ls[1], area.pp[1]])[::-1], # invert since we scan top to bottom
+                    area.ssy * -1
+                )
+            )
+
+            if meander:
+                target_xs[1::2, :] = target_xs[1::2, ::-1]
+
+            target_xys = np.stack([target_xs.flatten(), target_ys.flatten()], -1)
+            target_zs = self.plane.predict(target_xys)
 
             pixel_indices = target_xys - np.array(origin) # make pixel indices relative to top-left corner
             pixel_indices *= [1, -1]
