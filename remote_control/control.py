@@ -12,6 +12,19 @@ long_move_distance = None
 long_move_z = None
 last_position = None
 
+# SMALDIControl Remote Control Help:
+# =========================================================
+#  ? or Help      - show this help info
+#  AfLaser i      - autofocus laser intensity in percent
+#  Begin          - start measurement mode
+#  End            - end measurement mode
+#  Focus          - execute autofocus (Returns OK, FAIL or ERR)
+#  Goto x;y;z     - go to position (Goto ;;1 changes z only)
+#  Lights i       - intensity of LEDs in percent
+#  Meas           - start a measurement at actual position
+#  GetPos         - read actual position (x;y;z)
+#  Quit           - quit remote control!
+
 
 class ExpectException(Exception):
     pass
@@ -115,7 +128,7 @@ def set_light(value):
     flush_output_buffer(0)
     
 
-def get_position(autofocus=True, reset_light_to=255):
+def get_position(autofocus=True, reset_light_to=100):
     if autofocus:
         sendline('AfLaser 20')
         expect("OK")

@@ -39,14 +39,20 @@ def acquire(config, xys, pos, image_bounds, dummy, coords_fname, measure=True):
             rc.sendline('Begin')
             rc.expect("OK")
             try:
-                for xyz in pos:
+                for i, xyz in enumerate(pos):
+                    # Turn off light after 100 scans
+                    if i > 100:
+                        rc.set_light(0)
                     rc.acquirePixel(xyz, measure=measure)
             except Exception as e:
                 print(e)
                 raise
+
             rc.flush_output_buffer(3) # Wait before ending - it seems like a few commands get queued, and sending End immediately stops them
             rc.sendline("End")
         finally:
+            # Turn off light after any acquisition
+            rc.set_light(0)
             rc.close()
     else:
         try:
