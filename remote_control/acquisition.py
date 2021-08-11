@@ -2,17 +2,21 @@ from datetime import datetime
 from functools import wraps
 from inspect import getcallargs
 from pathlib import Path
+import json
 
 import numpy as np
-import json
+from IPython.display import display
 from scipy import interpolate
-from scipy.spatial.distance import euclidean, cosine
+from scipy.spatial.distance import euclidean
 from skimage import measure
 from sklearn.linear_model import LinearRegression
 from sklearn.utils.validation import check_is_fitted
+import ipywidgets as widgets
 
 from remote_control.control import save_coords
+from remote_control.preview import PhysicalPreview, ImzMLCoordPreview
 from remote_control.utils import acquire, NpEncoder
+
 
 SLIDES = {
         "spot30":
@@ -67,16 +71,6 @@ pad = lambda x: np.hstack([x, np.ones((x.shape[0], 1))])
 unpad = lambda x: x[:, :-1]
 
 
-def coord_formatter(data_x, data_y, data_z):
-    data_x, data_y, data_z = map(np.array, [data_x, data_y, data_z])
-
-    def format_coord(x,y):
-        i = np.argmin((data_x - x) ** 2 + (data_y - y) ** 2)
-        return 'Cursor: x=%#.5g, y=%#.5g\nNearest: #%i x=%#.5g, y=%#.5g, z=%#.5g' % (x, y, i, data_x[i], data_y[i], data_z[i])
-
-    return format_coord
-
-
 def grid_deviation(coords):
     """Models a linear transform based on the 4 supplied coords and returns the maximum error for each axis"""
     base_coords = [(0, 0, 1), (1, 0, 1), (0, 1, 1), (1, 1, 1)]
@@ -107,14 +101,17 @@ def _record_args(func):
         return func(self, *args, **kwargs)
     return wrapper
 
+
 class Acquisition():
     def __init__(self, config_fn, datadir=None):
         self.config = json.load(open(config_fn))
-        self.datadir = datadir
         self.targets = []
+        self.image_bounds = None
 
         self.subpattern_coords = [(0, 0)] # Physical X/Y offsets (in µm)
         self.subpattern_pixels = [(0, 0)] # Pixel-space X/Y offsets
+
+        self.plots = []
 
     def coords_fname(self, dataset_name):
         return dataset_name + 'positions.json'
@@ -140,8 +137,13 @@ class Acquisition():
         save_coords(filename, xys, pos, [], [])
 
     @_record_args
-    def set_image_bounds(self, image_bounds):
-        self.image_bounds = image_bounds
+    def set_image_bounds(self, image_bounds=None, *, min_x=None, max_x=None, min_y=None, max_y=None):
+        if image_bounds is not None:
+            self.image_bounds = image_bounds
+        else:
+            valid_args = all(val is not None for val in [min_x, max_x, min_y, max_y])
+            assert valid_args, 'set_image_bounds must be called with either image_bounds or the min/max x/y named arguments'
+            self.image_bounds = [[max_x, min_y], [min_x, max_y]]
 
     @_record_args
     def apply_subpattern(self, subpattern_pixels, subpattern_coords, size_x, size_y):
@@ -187,6 +189,7 @@ class Acquisition():
         :param measure: True to measure, False to only send goto commands (True, False)
         :return:
         """
+        assert self.targets is not None and len(self.targets), 'No targets - call generate_targets first'
         print("Acquiring {} ({} pixels)".format(dataset_name, len(self.targets)))
         xys = np.asarray([t[0] for t in self.targets])
         pos = np.asarray([t[1] for t in self.targets])
@@ -226,47 +229,52 @@ class Acquisition():
         :return: a tuple of two plt.Figure objects containing the plots if show == False.
         """
         import matplotlib.pyplot as plt
-        safety_box = self.image_bounds
+        from remote_control.control_panel import ControlPanel
+
+        def handle_select(i, data_coord, pos_coord):
+            pos_plot.set_selection(i)
+            path_plot.set_selection(i)
+            control_panel.set_selected_position(pos_coord)
+
         xys = np.asarray([t[0] for t in self.targets])
-        pos = [t[1] for t in self.targets]
+        pos = np.asarray([t[1] for t in self.targets])
 
-        print("total pixels: ", len(self.targets))
+        for plot in self.plots:
+            plot.close()
+        self.plots.clear()
 
-        path_fig = plt.figure()
-        plt.plot([xy[0] for xy in xys], [xy[1] for xy in xys])
-        plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys], s=3)
-
-        # Mark start and stop
-        if annotate:
-            plt.scatter(*xys[0], c=".2", marker="x")
-            plt.scatter(*xys[-1], c=".2", marker="x")
-            plt.annotate("START", xys[0], c=".2", xytext = (-2, 2), textcoords="offset pixels", va="bottom", ha="right")
-            plt.annotate("STOP", xys[-1], c=".2", xytext = (3, -3), textcoords="offset pixels", va="top", ha="left")
-
-        plt.axis('equal')
-        plt.title("Output coordinates")
-        plt.gca().invert_yaxis()
-        plt.gca().format_coord = coord_formatter([xy[0] for xy in xys], [xy[1] for xy in xys], [0 for xy in xys])
         if show:
-            plt.show()
+            # Close any existing figures that may have accumulated from other acquisition instances
+            plt.close('all')
 
-        pos_fig = plt.figure()
-        plt.scatter([xy[0] for xy in pos], [xy[1] for xy in pos], c=[xy[2] for xy in pos], s=1)
-        plt.plot(
-            [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0], safety_box[0][0]],
-            [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1], safety_box[1][1]],
-            "--r"
-        )
-        plt.axis('equal')
-        plt.title("Physical shape")
-        plt.gca().format_coord = coord_formatter([xy[0] for xy in pos], [xy[1] for xy in pos], [xy[2] for xy in pos])
-        plt.colorbar()
-        
+        plt.ion()
+        logs_out = widgets.Output()
+
+        pos_out = widgets.Output()
+        with pos_out:
+            pos_plot = PhysicalPreview(pos, logs_out, self.image_bounds)
+            pos_plot.on_select(handle_select)
+            self.plots.append(pos_plot)
+
+        path_out = widgets.Output()
+        with path_out:
+            path_plot = ImzMLCoordPreview(xys, pos, logs_out, annotate)
+            path_plot.on_select(handle_select)
+            self.plots.append(path_plot)
+
         if show:
-            plt.show()
+            tabs = widgets.Tab()
+            tabs.children = [pos_out, path_out]
+            tabs.set_title(1, 'ImzML layout')
+            tabs.set_title(0, 'Stage positions')
+            display(tabs)
+
+            control_panel = ControlPanel(self, logs_out)
+            display(control_panel.panel_out)
+
+            display(logs_out)
         else:
-            return path_fig, pos_fig
-
+            return pos_plot.fig, path_plot.fig
 
 
 class RectangularAquisition(Acquisition):
@@ -589,14 +597,14 @@ class QueueAquisition(Acquisition):
         safety_box = self.image_bounds
         
         fig = plt.figure()
-        
-        plt.plot(
-            [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0], safety_box[0][0]],
-            [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1], safety_box[1][1]],
-            "0.8",
-            linestyle=":",
-            linewidth=1
-        )
+        if safety_box:
+            plt.plot(
+                [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0], safety_box[0][0]],
+                [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1], safety_box[1][1]],
+                "0.8",
+                linestyle=":",
+                linewidth=1
+            )
 
         ax = fig.axes[0]
 

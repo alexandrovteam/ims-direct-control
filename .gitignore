@@ -2,3 +2,4 @@
 .ipynb_checkpoints
 /remote_control.egg-info
 __pycache__
+remote_config.json
