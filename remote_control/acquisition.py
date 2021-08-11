@@ -426,7 +426,15 @@ class WellPlateGridAquisition(Acquisition):
         assert location in LOCATIONS, "location not in {}".format(LOCATIONS)
         spacing = np.asarray(self.plate["spot_spacing"])
         transform = TRANSFORMS[location]
-        return transform(np.asarray(wells))
+        wells = np.asarray(wells)
+        assert wells.ndim == 2, 'wells must be a 2D array'
+        assert wells.shape[1] in (2, 3), 'well coordinates must each have 2 or 3 axes'
+
+        if wells.shape[1] == 2:
+            # Pad to 3 components per coordinate, as that's expected by self.get_transform
+            wells = np.pad(wells, pad_width=((0, 0), (0, 3 - wells.shape[1])))
+
+        return transform(wells)
 
     def _transform(self, vect):
         return unpad(np.dot(pad(vect), self.tform))
@@ -442,7 +450,7 @@ class WellPlateGridAquisition(Acquisition):
             [maxs[0], maxs[1], 0]
         ]
         locations = ["top_left", "top_right", "bottom_left", "bottom_right"]
-        t = [self._transform(self._well_coord(e, l).reshape(1, -1))[0] for e, l in zip(extremes, locations)]
+        t = [self._transform(self._well_coord([e], l))[0] for e, l in zip(extremes, locations)]
         return np.asarray(t)
 
     @_record_args
