@@ -3,6 +3,7 @@ from functools import wraps
 from inspect import getcallargs
 from pathlib import Path
 import json
+from traceback import format_exc
 
 import numpy as np
 from IPython.display import display
@@ -14,6 +15,7 @@ from sklearn.utils.validation import check_is_fitted
 import ipywidgets as widgets
 
 from remote_control.control import save_coords
+from remote_control.email import send_email
 from remote_control.preview import PhysicalPreview, ImzMLCoordPreview
 from remote_control.utils import acquire, NpEncoder
 
@@ -143,6 +145,8 @@ class Acquisition():
         else:
             valid_args = all(val is not None for val in [min_x, max_x, min_y, max_y])
             assert valid_args, 'set_image_bounds must be called with either image_bounds or the min/max x/y named arguments'
+            assert min_x < max_x, 'min_x must be less than max_x'
+            assert min_y < max_y, 'min_y must be less than max_y'
             self.image_bounds = [[max_x, min_y], [min_x, max_y]]
 
     @_record_args
@@ -174,39 +178,66 @@ class Acquisition():
 
         self.apply_subpattern(subpattern_pixels, subpattern_coords, psx, psy)
 
+    def _get_recorded_args_json(self):
+        try:
+            if getattr(self, '_recorded_args', None) is not None:
+                return json.dumps(self._recorded_args, indent=2, cls=NpEncoder)
+        except:
+            print(f'Failed to dump recorded acquisition parameters:\n{format_exc()}')
+
     def _save_recorded_args(self, suffix=''):
-        if self.config.get('saved_parameters') and getattr(self, '_recorded_args', None) is not None:
+        args_json = self._get_recorded_args_json()
+        if self.config.get('saved_parameters') and args_json is not None:
             base_path = Path(self.config.get('saved_parameters'))
             base_path.mkdir(parents=True, exist_ok=True)
             f = base_path / f'{datetime.now().isoformat().replace(":","_")}{suffix}.json'
-            json.dump(self._recorded_args, f.open('w'), indent=2, cls=NpEncoder)
+            f.open('w').write(args_json)
 
     @_record_args
-    def acquire(self, dataset_name, dummy=True, measure=True):
-        """ DEPRECATED - use generate_targets and acquire separately instead
-        :param dataset_name: output filename (should match .raw filename)
+    def acquire(self, filename, dummy=True, measure=True, email_on_success=None, email_on_failure=None):
+        """
+        :param filename: output filename prefix (should match .raw filename)
         :param dummy: dummy run (True, False)
         :param measure: True to measure, False to only send goto commands (True, False)
         :return:
         """
         assert self.targets is not None and len(self.targets), 'No targets - call generate_targets first'
-        print("Acquiring {} ({} pixels)".format(dataset_name, len(self.targets)))
-        xys = np.asarray([t[0] for t in self.targets])
-        pos = np.asarray([t[1] for t in self.targets])
-        self._recorded_args['raw_xys'] = xys.tolist()
-        self._recorded_args['raw_pos'] = pos.tolist()
-        self._save_recorded_args('_dummy' if dummy else '_moveonly' if not measure else '_real')
-        acquire(
-            self.config,
-            xys,
-            pos,
-            self.image_bounds,
-            dummy,
-            self.coords_fname(dataset_name),
-            measure=measure
-        )
-        if not dummy:
-            self.write_imzml_coords(dataset_name)
+        try:
+            print("Acquiring {} ({} pixels)".format(filename, len(self.targets)))
+            xys = np.asarray([t[0] for t in self.targets])
+            pos = np.asarray([t[1] for t in self.targets])
+            self._recorded_args['raw_xys'] = xys.tolist()
+            self._recorded_args['raw_pos'] = pos.tolist()
+            self._save_recorded_args('_dummy' if dummy else '_moveonly' if not measure else '_real')
+            acquire(
+                config=self.config,
+                xys=xys,
+                pos=pos,
+                image_bounds=self.image_bounds,
+                dummy=dummy,
+                coords_fname=self.coords_fname(filename),
+                measure=measure
+            )
+            if not dummy:
+                self.write_imzml_coords(filename)
+
+            assert False, 'Something went wrong'
+
+            send_email(
+                self.config,
+                email_on_success,
+                'MALDI notebook success',
+                f'Acquisition completed for {filename}'
+            )
+        except:
+            send_email(
+                self.config,
+                email_on_failure,
+                'MALDI notebook error',
+                f'The following exception occurred while acquiring {filename}:\n{format_exc()}'
+            )
+            raise
+
 
     def mask_function(self, mask_function_name):
         return MASK_FUNCTIONS[mask_function_name]

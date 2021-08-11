@@ -65,11 +65,15 @@ def flush_output_buffer(delay=0.01):
 def close(quit=False):
     global telnet, logfile
     # Disconnect telnet
-    with telnet_lock:
-        if quit:
-            sendline('Quit')
-        telnet.close()
-        telnet = None
+    if telnet is not None:
+        with telnet_lock:
+            if quit:
+                try:
+                    sendline('Quit')
+                except:
+                    pass  # The quit command may have failed if the connection was broken
+            telnet.close()
+            telnet = None
     # Close logfile
     if logfile:
         try:
