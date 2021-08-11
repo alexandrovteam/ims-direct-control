@@ -221,8 +221,6 @@ class Acquisition():
             if not dummy:
                 self.write_imzml_coords(filename)
 
-            assert False, 'Something went wrong'
-
             send_email(
                 self.config,
                 email_on_success,
