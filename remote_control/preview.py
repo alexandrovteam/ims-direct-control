@@ -68,6 +68,8 @@ class PreviewPlot:
                 self.selection_cursor.remove()
                 self.selection_cursor = None
 
+        self.fig.canvas.draw()
+
 
 class PhysicalPreview(PreviewPlot):
     def __init__(self, pos_coords, logs_out, safety_box):

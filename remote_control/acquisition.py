@@ -251,19 +251,20 @@ class Acquisition():
                         if cx < mask.shape[0] and cy < mask.shape[1] and mask[cx, cy]]
         print(f'Number of pixels after mask: {len(self.targets)}')
 
-    def plot_targets(self, annotate=False, show=True):
+    def plot_targets(self, annotate=False, show=True, dummy=False):
         """ Plot output data coordinates and physical coordinates.
         :param annotate: bool, whether to annotate start and stop.
-        :param show: bool, whether to show the plots, if False return it instead.
+        :param show: bool, whether to show the plots and control panel, if False return just the plots
+        :param dummy: bool, whether to set dummy mode in the control panel
         :return: a tuple of two plt.Figure objects containing the plots if show == False.
         """
         import matplotlib.pyplot as plt
         from remote_control.control_panel import ControlPanel
 
-        def handle_select(i, data_coord, pos_coord):
-            pos_plot.set_selection(i)
-            path_plot.set_selection(i)
-            control_panel.set_selected_position(pos_coord)
+        def handle_select(idx, data_coord, pos_coord):
+            pos_plot.set_selection(idx)
+            path_plot.set_selection(idx)
+            control_panel.set_selected_position(idx, pos_coord)
 
         xys = np.asarray([t[0] for t in self.targets])
         pos = np.asarray([t[1] for t in self.targets])
@@ -298,10 +299,14 @@ class Acquisition():
             tabs.set_title(0, 'Stage positions')
             display(tabs)
 
-            control_panel = ControlPanel(self, logs_out)
+            control_panel = ControlPanel(self, logs_out, dummy=dummy)
+            control_panel.on_select(handle_select)
             display(control_panel.panel_out)
 
             display(logs_out)
+
+            if len(pos):
+                handle_select(0, xys[0], pos[0])
         else:
             return pos_plot.fig, path_plot.fig
 
