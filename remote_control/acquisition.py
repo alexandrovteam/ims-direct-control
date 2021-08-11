@@ -477,7 +477,6 @@ class WellPlateGridAquisition(Acquisition):
         """
 
         if mask_function_name is None:
-            print(self.plate)
             mask_function_name = self.plate['shape']
 
         def well_mask(c, xv, yv):

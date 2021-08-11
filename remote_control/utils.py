@@ -25,12 +25,15 @@ def decode_b64png(s, imshape):
     return q.reshape(imshape)
 
 
-def acquire(config, xys, pos, image_bounds, dummy, coords_fname, measure=True):
+def check_image_bounds(pos, image_bounds):
     if image_bounds:
         for x, y, *z in pos:
             if not all([image_bounds[0][0] > x > image_bounds[1][0], image_bounds[0][1] < y < image_bounds[1][1]]):
                 print(x, y, [image_bounds[0][0] > x > image_bounds[1][0], image_bounds[0][1] < y < image_bounds[1][1]])
-                raise IOError('Pixel {} out of bounding box {}'.format((x,y), image_bounds))
+                raise IOError('Pixel {} out of bounding box {}'.format((x,y,*z), image_bounds))
+
+def acquire(config, xys, pos, image_bounds, dummy, coords_fname, measure=True):
+    check_image_bounds(pos, image_bounds)
 
     if not dummy:
         rc.save_coords(coords_fname, xys, pos, [], [])

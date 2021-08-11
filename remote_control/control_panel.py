@@ -10,6 +10,7 @@ from skimage import measure, segmentation
 
 import remote_control.control as rc
 from remote_control.acquisition import Acquisition
+from remote_control.utils import check_image_bounds
 
 _current_instance: Optional['ControlPanel'] = None
 
@@ -181,7 +182,11 @@ class ControlPanel:
     def _go_to_selection(self, b):
         with self.logs_out:
             clear_output()
-            rc.acquirePixel(self._sel_pos, dummy=self.dummy, measure=False)
+            self._go_to_position(self._sel_pos)
+
+    def _go_to_position(self, position):
+        check_image_bounds([position], self.acq.image_bounds)
+        rc.acquirePixel(position, dummy=self.dummy, measure=False)
 
     def _trace_well(self, b):
         with self.logs_out:
@@ -195,7 +200,7 @@ class ControlPanel:
                     time.sleep(0.2)  # Pause after each corner
 
                 self._select(corner_idx)
-                rc.acquirePixel(pos[corner_idx], dummy=self.dummy, measure=False)
+                self._go_to_position(pos[corner_idx])
 
     def _preview_path(self, b):
         with self.logs_out:
@@ -212,7 +217,7 @@ class ControlPanel:
                 corner_idxs = self._get_region_corners(labels == label, idx_map, pos)
                 for i, corner_idx in enumerate(corner_idxs):
                     self._select(corner_idx)
-                    rc.acquirePixel(pos[corner_idx], dummy=self.dummy, measure=False)
+                    self._go_to_position(pos[corner_idx])
                     if i == 0:
                         time.sleep(0.2)  # Pause at first corner
 
