@@ -52,7 +52,7 @@ class ControlPanel:
         self.connect_btn = widgets.Button(description='Connect')
         self.connect_btn.on_click(self._connect)
         self.disconnect_btn = widgets.Button(description='Disconnect')
-        self.connect_btn.on_click(self._disconnect)
+        self.disconnect_btn.on_click(self._disconnect)
 
         self.position_text = widgets.Text(description='Position:', disabled=True)
         self.update_pos_btn = widgets.Button(description='Update')
