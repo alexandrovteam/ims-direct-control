@@ -1,0 +1,14 @@
+{ 
+    "host": "ip.address.of.ims.control.computer",
+    "user": "telnet-username",
+    "password": "telnet-password",
+    "telnet": "telnet on Linux, puttytel.exe on Windows (separate installation required)",
+    "logfile": "./remote_control_log.txt",
+    "saved_parameters": "./",
+    "smtp": {
+        "host": "localhost:25",
+        "username": null,
+        "password": null,
+        "from_address": "test@example.com"
+    }
+}

@@ -2,11 +2,13 @@ import sys, time
 from io import TextIOWrapper
 from telnetlib import Telnet
 from datetime import datetime
+from threading import RLock
 from typing import Optional
 import numpy as np
 
 telnet: Optional[Telnet] = None
 logfile: Optional[TextIOWrapper] = None
+telnet_lock = RLock()  # Mutex so that telnet can be safely used from multiple threads
 
 long_move_distance = None
 long_move_z = None
@@ -62,42 +64,54 @@ def flush_output_buffer(delay=0.01):
     
 def close(quit=False):
     global telnet, logfile
-    if quit:
-        sendline('Quit')
-    telnet.close()
-    telnet = None
-    logfile = None
+    # Disconnect telnet
+    if telnet is not None:
+        with telnet_lock:
+            if quit:
+                try:
+                    sendline('Quit')
+                except:
+                    pass  # The quit command may have failed if the connection was broken
+            telnet.close()
+            telnet = None
+    # Close logfile
+    if logfile:
+        try:
+            logfile.close()
+        except:
+            pass
+        logfile = None
     
     
 def initialise_and_login(config):
     global telnet, logfile, last_position
-    if telnet is None:
-        if config.get('logfile') == 'stdout':
-            logfile = sys.stdout
-        elif config.get('logfile'):
-            logfile = open(config['logfile'], 'w+')
-        else:
-            logfile = None
-        telnet = Telnet(config['host'])
-        
-        try:
-            expect('Benutzername:')
-            sendline(config['user'])
-            expect('Passwort:')
-            sendline(config['password'])
-            result = readline()
-
-            last_position = get_position(False, None)
+    with telnet_lock:
+        if telnet is None:
+            if config.get('logfile') == 'stdout':
+                logfile = sys.stdout
+            elif config.get('logfile'):
+                logfile = open(config['logfile'], 'w+')
+            else:
+                logfile = None
+            telnet = Telnet(config['host'])
 
             try:
-                expect('Benutzername:', timeout=0.005)
-                raise Exception('Login failed')
-            except ExpectException:
-                pass # No more login prompt = success
-        except:
-            telnet.close()
-            telnet = None
-            raise
+                expect('Benutzername:')
+                sendline(config['user'])
+                expect('Passwort:')
+                sendline(config['password'])
+                result = readline()
+
+                last_position = get_position(False, None)
+
+                try:
+                    expect('Benutzername:', timeout=0.005)
+                    raise Exception('Login failed')
+                except ExpectException:
+                    pass # No more login prompt = success
+            except:
+                close(False)
+                raise
 
 
 def configure_fly_at_fixed_z(distance=None, z=None):
@@ -115,61 +129,65 @@ def goto(xyz, dummy):
     if dummy:
         print("Goto {};{};{}".format(xyz[0], xyz[1], xyz[2]))
     else:
-        sendline("Goto {};{};{}".format(xyz[0], xyz[1], xyz[2]))
-        expect("OK\r\n")
-        flush_output_buffer(0)
+        with telnet_lock:
+            sendline("Goto {};{};{}".format(xyz[0], xyz[1], xyz[2]))
+            expect("OK\r\n")
+            flush_output_buffer(0)
 
     last_position = tuple(xyz)
 
 
 def set_light(value):
-    sendline(f'Lights {value}')
-    expect("OK")
-    flush_output_buffer(0)
+    with telnet_lock:
+        sendline(f'Lights {value}')
+        expect("OK")
+        flush_output_buffer(0)
     
 
-def get_position(autofocus=True, reset_light_to=100):
-    if autofocus:
-        sendline('AfLaser 20')
-        expect("OK")
-        set_light(0)
-        sendline('Focus')
-        expect("OK")
-    
-    flush_output_buffer()
-    sendline('GetPos')
-    coord_line = readline()
-    coord_strs = coord_line.strip().replace(';OK','').split(';')
-    coords = tuple(map(float, coord_strs))
+def get_position(autofocus=False, reset_light_to=100):
+    with telnet_lock:
+        if autofocus:
+            sendline('AfLaser 20')
+            expect("OK")
+            set_light(0)
+            sendline('Focus')
+            expect("OK")
 
-    if autofocus:
-        sendline('AfLaser 0')
-        expect("OK")
-    if reset_light_to is not None:
-        set_light(0)
+        flush_output_buffer()
+        sendline('GetPos')
+        coord_line = readline()
+        coord_strs = coord_line.strip().replace(';OK','').split(';')
+        coords = tuple(map(float, coord_strs))
 
-    flush_output_buffer()
-    return coords
+        if autofocus:
+            sendline('AfLaser 0')
+            expect("OK")
+        if reset_light_to is not None:
+            set_light(0)
+
+        flush_output_buffer()
+        return coords
 
 
 def acquirePixel(xyz, dummy=False, measure=True):
     global last_position
-    # Initialize last_position if it wasn't captured during login
-    if last_position is None:
-        last_position = tuple(xyz)
-    # If the long move parameters are set, move away from the slide when moving more than the specified distance
-    if long_move_distance is not None and long_move_z is not None:
-        distance = np.linalg.norm(np.subtract(xyz[:2], last_position[:2]))
-        if distance >= long_move_distance:
-            goto((*last_position[:2], long_move_z), dummy)
-            goto((*xyz[:2], long_move_z), dummy)
+    with telnet_lock:
+        # Initialize last_position if it wasn't captured during login
+        if last_position is None:
+            last_position = tuple(xyz)
+        # If the long move parameters are set, move away from the slide when moving more than the specified distance
+        if long_move_distance is not None and long_move_z is not None:
+            distance = np.linalg.norm(np.subtract(xyz[:2], last_position[:2]))
+            if distance >= long_move_distance:
+                goto((*last_position[:2], long_move_z), dummy)
+                goto((*xyz[:2], long_move_z), dummy)
 
-    goto(xyz, dummy)
+        goto(xyz, dummy)
 
-    if not dummy and measure:
-        sendline('Meas')
-        expect("OK\r\n")
-        flush_output_buffer(0)
+        if not dummy and measure:
+            sendline('Meas')
+            expect("OK\r\n")
+            flush_output_buffer(0)
 
 
 def save_coords(json_fname, xys, pos, im_origin, pixel_size):

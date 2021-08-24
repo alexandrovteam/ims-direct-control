@@ -2,17 +2,23 @@ from datetime import datetime
 from functools import wraps
 from inspect import getcallargs
 from pathlib import Path
+import json
+from traceback import format_exc
 
 import numpy as np
-import json
+from IPython.display import display
 from scipy import interpolate
-from scipy.spatial.distance import euclidean, cosine
+from scipy.spatial.distance import euclidean
 from skimage import measure
 from sklearn.linear_model import LinearRegression
 from sklearn.utils.validation import check_is_fitted
+import ipywidgets as widgets
 
 from remote_control.control import save_coords
+from remote_control.email import send_email
+from remote_control.preview import PhysicalPreview, ImzMLCoordPreview
 from remote_control.utils import acquire, NpEncoder
+
 
 SLIDES = {
         "spot30":
@@ -67,16 +73,6 @@ pad = lambda x: np.hstack([x, np.ones((x.shape[0], 1))])
 unpad = lambda x: x[:, :-1]
 
 
-def coord_formatter(data_x, data_y, data_z):
-    data_x, data_y, data_z = map(np.array, [data_x, data_y, data_z])
-
-    def format_coord(x,y):
-        i = np.argmin((data_x - x) ** 2 + (data_y - y) ** 2)
-        return 'Cursor: x=%#.5g, y=%#.5g\nNearest: #%i x=%#.5g, y=%#.5g, z=%#.5g' % (x, y, i, data_x[i], data_y[i], data_z[i])
-
-    return format_coord
-
-
 def grid_deviation(coords):
     """Models a linear transform based on the 4 supplied coords and returns the maximum error for each axis"""
     base_coords = [(0, 0, 1), (1, 0, 1), (0, 1, 1), (1, 1, 1)]
@@ -107,14 +103,17 @@ def _record_args(func):
         return func(self, *args, **kwargs)
     return wrapper
 
+
 class Acquisition():
     def __init__(self, config_fn, datadir=None):
         self.config = json.load(open(config_fn))
-        self.datadir = datadir
         self.targets = []
+        self.image_bounds = None
 
         self.subpattern_coords = [(0, 0)] # Physical X/Y offsets (in µm)
         self.subpattern_pixels = [(0, 0)] # Pixel-space X/Y offsets
+
+        self.plots = []
 
     def coords_fname(self, dataset_name):
         return dataset_name + 'positions.json'
@@ -140,8 +139,15 @@ class Acquisition():
         save_coords(filename, xys, pos, [], [])
 
     @_record_args
-    def set_image_bounds(self, image_bounds):
-        self.image_bounds = image_bounds
+    def set_image_bounds(self, image_bounds=None, *, min_x=None, max_x=None, min_y=None, max_y=None):
+        if image_bounds is not None:
+            self.image_bounds = image_bounds
+        else:
+            valid_args = all(val is not None for val in [min_x, max_x, min_y, max_y])
+            assert valid_args, 'set_image_bounds must be called with either image_bounds or the min/max x/y named arguments'
+            assert min_x < max_x, 'min_x must be less than max_x'
+            assert min_y < max_y, 'min_y must be less than max_y'
+            self.image_bounds = [[max_x, min_y], [min_x, max_y]]
 
     @_record_args
     def apply_subpattern(self, subpattern_pixels, subpattern_coords, size_x, size_y):
@@ -172,38 +178,64 @@ class Acquisition():
 
         self.apply_subpattern(subpattern_pixels, subpattern_coords, psx, psy)
 
+    def _get_recorded_args_json(self):
+        try:
+            if getattr(self, '_recorded_args', None) is not None:
+                return json.dumps(self._recorded_args, indent=2, cls=NpEncoder)
+        except:
+            print(f'Failed to dump recorded acquisition parameters:\n{format_exc()}')
+
     def _save_recorded_args(self, suffix=''):
-        if self.config.get('saved_parameters') and getattr(self, '_recorded_args', None) is not None:
+        args_json = self._get_recorded_args_json()
+        if self.config.get('saved_parameters') and args_json is not None:
             base_path = Path(self.config.get('saved_parameters'))
             base_path.mkdir(parents=True, exist_ok=True)
             f = base_path / f'{datetime.now().isoformat().replace(":","_")}{suffix}.json'
-            json.dump(self._recorded_args, f.open('w'), indent=2, cls=NpEncoder)
+            f.open('w').write(args_json)
 
     @_record_args
-    def acquire(self, dataset_name, dummy=True, measure=True):
-        """ DEPRECATED - use generate_targets and acquire separately instead
-        :param dataset_name: output filename (should match .raw filename)
+    def acquire(self, filename, dummy=True, measure=True, email_on_success=None, email_on_failure=None):
+        """
+        :param filename: output filename prefix (should match .raw filename)
         :param dummy: dummy run (True, False)
         :param measure: True to measure, False to only send goto commands (True, False)
         :return:
         """
-        print("Acquiring {} ({} pixels)".format(dataset_name, len(self.targets)))
-        xys = np.asarray([t[0] for t in self.targets])
-        pos = np.asarray([t[1] for t in self.targets])
-        self._recorded_args['raw_xys'] = xys.tolist()
-        self._recorded_args['raw_pos'] = pos.tolist()
-        self._save_recorded_args('_dummy' if dummy else '_moveonly' if not measure else '_real')
-        acquire(
-            self.config,
-            xys,
-            pos,
-            self.image_bounds,
-            dummy,
-            self.coords_fname(dataset_name),
-            measure=measure
-        )
-        if not dummy:
-            self.write_imzml_coords(dataset_name)
+        assert self.targets is not None and len(self.targets), 'No targets - call generate_targets first'
+        try:
+            print("Acquiring {} ({} pixels)".format(filename, len(self.targets)))
+            xys = np.asarray([t[0] for t in self.targets])
+            pos = np.asarray([t[1] for t in self.targets])
+            self._recorded_args['raw_xys'] = xys.tolist()
+            self._recorded_args['raw_pos'] = pos.tolist()
+            self._save_recorded_args('_dummy' if dummy else '_moveonly' if not measure else '_real')
+            acquire(
+                config=self.config,
+                xys=xys,
+                pos=pos,
+                image_bounds=self.image_bounds,
+                dummy=dummy,
+                coords_fname=self.coords_fname(filename),
+                measure=measure
+            )
+            if not dummy:
+                self.write_imzml_coords(filename)
+
+            send_email(
+                self.config,
+                email_on_success,
+                'MALDI notebook success',
+                f'Acquisition completed for {filename}'
+            )
+        except:
+            send_email(
+                self.config,
+                email_on_failure,
+                'MALDI notebook error',
+                f'The following exception occurred while acquiring {filename}:\n{format_exc()}'
+            )
+            raise
+
 
     def mask_function(self, mask_function_name):
         return MASK_FUNCTIONS[mask_function_name]
@@ -219,54 +251,64 @@ class Acquisition():
                         if cx < mask.shape[0] and cy < mask.shape[1] and mask[cx, cy]]
         print(f'Number of pixels after mask: {len(self.targets)}')
 
-    def plot_targets(self, annotate=False, show=True):
+    def plot_targets(self, annotate=False, show=True, dummy=False):
         """ Plot output data coordinates and physical coordinates.
         :param annotate: bool, whether to annotate start and stop.
-        :param show: bool, whether to show the plots, if False return it instead.
+        :param show: bool, whether to show the plots and control panel, if False return just the plots
+        :param dummy: bool, whether to set dummy mode in the control panel
         :return: a tuple of two plt.Figure objects containing the plots if show == False.
         """
         import matplotlib.pyplot as plt
-        safety_box = self.image_bounds
+        from remote_control.control_panel import ControlPanel
+
+        def handle_select(idx, data_coord, pos_coord):
+            pos_plot.set_selection(idx)
+            path_plot.set_selection(idx)
+            control_panel.set_selected_position(idx, pos_coord)
+
         xys = np.asarray([t[0] for t in self.targets])
-        pos = [t[1] for t in self.targets]
+        pos = np.asarray([t[1] for t in self.targets])
 
-        print("total pixels: ", len(self.targets))
+        for plot in self.plots:
+            plot.close()
+        self.plots.clear()
 
-        path_fig = plt.figure()
-        plt.plot([xy[0] for xy in xys], [xy[1] for xy in xys])
-        plt.scatter([xy[0] for xy in xys], [xy[1] for xy in xys], s=3)
-
-        # Mark start and stop
-        if annotate:
-            plt.scatter(*xys[0], c=".2", marker="x")
-            plt.scatter(*xys[-1], c=".2", marker="x")
-            plt.annotate("START", xys[0], c=".2", xytext = (-2, 2), textcoords="offset pixels", va="bottom", ha="right")
-            plt.annotate("STOP", xys[-1], c=".2", xytext = (3, -3), textcoords="offset pixels", va="top", ha="left")
-
-        plt.axis('equal')
-        plt.title("Output coordinates")
-        plt.gca().invert_yaxis()
-        plt.gca().format_coord = coord_formatter([xy[0] for xy in xys], [xy[1] for xy in xys], [0 for xy in xys])
         if show:
-            plt.show()
+            # Close any existing figures that may have accumulated from other acquisition instances
+            plt.close('all')
 
-        pos_fig = plt.figure()
-        plt.scatter([xy[0] for xy in pos], [xy[1] for xy in pos], c=[xy[2] for xy in pos], s=1)
-        plt.plot(
-            [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0], safety_box[0][0]],
-            [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1], safety_box[1][1]],
-            "--r"
-        )
-        plt.axis('equal')
-        plt.title("Physical shape")
-        plt.gca().format_coord = coord_formatter([xy[0] for xy in pos], [xy[1] for xy in pos], [xy[2] for xy in pos])
-        plt.colorbar()
-        
+        plt.ion()
+        logs_out = widgets.Output()
+
+        pos_out = widgets.Output()
+        with pos_out:
+            pos_plot = PhysicalPreview(pos, logs_out, self.image_bounds)
+            pos_plot.on_select(handle_select)
+            self.plots.append(pos_plot)
+
+        path_out = widgets.Output()
+        with path_out:
+            path_plot = ImzMLCoordPreview(xys, pos, logs_out, annotate)
+            path_plot.on_select(handle_select)
+            self.plots.append(path_plot)
+
         if show:
-            plt.show()
+            tabs = widgets.Tab()
+            tabs.children = [pos_out, path_out]
+            tabs.set_title(1, 'ImzML layout')
+            tabs.set_title(0, 'Stage positions')
+            display(tabs)
+
+            control_panel = ControlPanel(self, logs_out, dummy=dummy)
+            control_panel.on_select(handle_select)
+            display(control_panel.panel_out)
+
+            display(logs_out)
+
+            if len(pos):
+                handle_select(0, xys[0], pos[0])
         else:
-            return path_fig, pos_fig
-
+            return pos_plot.fig, path_plot.fig
 
 
 class RectangularAquisition(Acquisition):
@@ -384,7 +426,15 @@ class WellPlateGridAquisition(Acquisition):
         assert location in LOCATIONS, "location not in {}".format(LOCATIONS)
         spacing = np.asarray(self.plate["spot_spacing"])
         transform = TRANSFORMS[location]
-        return transform(np.asarray(wells))
+        wells = np.asarray(wells)
+        assert wells.ndim == 2, 'wells must be a 2D array'
+        assert wells.shape[1] in (2, 3), 'well coordinates must each have 2 or 3 axes'
+
+        if wells.shape[1] == 2:
+            # Pad to 3 components per coordinate, as that's expected by self.get_transform
+            wells = np.pad(wells, pad_width=((0, 0), (0, 3 - wells.shape[1])))
+
+        return transform(wells)
 
     def _transform(self, vect):
         return unpad(np.dot(pad(vect), self.tform))
@@ -400,7 +450,7 @@ class WellPlateGridAquisition(Acquisition):
             [maxs[0], maxs[1], 0]
         ]
         locations = ["top_left", "top_right", "bottom_left", "bottom_right"]
-        t = [self._transform(self._well_coord(e, l).reshape(1, -1))[0] for e, l in zip(extremes, locations)]
+        t = [self._transform(self._well_coord([e], l))[0] for e, l in zip(extremes, locations)]
         return np.asarray(t)
 
     @_record_args
@@ -427,7 +477,6 @@ class WellPlateGridAquisition(Acquisition):
         """
 
         if mask_function_name is None:
-            print(self.plate)
             mask_function_name = self.plate['shape']
 
         def well_mask(c, xv, yv):
@@ -589,14 +638,14 @@ class QueueAquisition(Acquisition):
         safety_box = self.image_bounds
         
         fig = plt.figure()
-        
-        plt.plot(
-            [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0], safety_box[0][0]],
-            [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1], safety_box[1][1]],
-            "0.8",
-            linestyle=":",
-            linewidth=1
-        )
+        if safety_box:
+            plt.plot(
+                [safety_box[0][0], safety_box[0][0], safety_box[1][0], safety_box[1][0], safety_box[0][0]],
+                [safety_box[1][1], safety_box[0][1], safety_box[0][1], safety_box[1][1], safety_box[1][1]],
+                "0.8",
+                linestyle=":",
+                linewidth=1
+            )
 
         ax = fig.axes[0]
 
