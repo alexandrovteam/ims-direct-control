@@ -46,6 +46,8 @@ def acquire(config, xys, pos, image_bounds, dummy, coords_fname, measure=True):
                     # Turn off light after 100 scans
                     if i > 100:
                         rc.set_light(0)
+                        rc.set_af_laser(0)
+
                     rc.acquirePixel(xyz, measure=measure)
             except Exception as e:
                 print(e)
@@ -56,6 +58,7 @@ def acquire(config, xys, pos, image_bounds, dummy, coords_fname, measure=True):
         finally:
             # Turn off light after any acquisition
             rc.set_light(0)
+            rc.set_af_laser(0)
             rc.close()
     else:
         try:

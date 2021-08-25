@@ -142,13 +142,17 @@ def set_light(value):
         sendline(f'Lights {value}')
         expect("OK")
         flush_output_buffer(0)
-    
+
+def set_af_laser(value):
+    with telnet_lock:
+        sendline(f'AfLaser {value}')
+        expect("OK")
+        flush_output_buffer(0)
 
 def get_position(autofocus=False, reset_light_to=100):
     with telnet_lock:
         if autofocus:
-            sendline('AfLaser 20')
-            expect("OK")
+            set_af_laser(20)
             set_light(0)
             sendline('Focus')
             expect("OK")
@@ -160,8 +164,7 @@ def get_position(autofocus=False, reset_light_to=100):
         coords = tuple(map(float, coord_strs))
 
         if autofocus:
-            sendline('AfLaser 0')
-            expect("OK")
+            set_af_laser(0)
         if reset_light_to is not None:
             set_light(0)
 
