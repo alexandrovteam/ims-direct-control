@@ -651,6 +651,7 @@ class QueueAquisition(Acquisition):
 
         # This is hard-coded badness. Don't!
         if plot_labtek_wells:
+            assert self.image_bounds, 'set_image_bounds must be called before plot_areas when plot_labtek_wells=True'
             origin_x, origin_y = self.image_bounds[1]
             well_w, well_h = 7000, 9000
             ctc_x, ctc_y = 10500, 12500
@@ -685,7 +686,7 @@ class QueueAquisition(Acquisition):
             ax.add_patch(g)
 
             plt.annotate(
-                text=idx,
+                idx,
                 xy=(area.ls[0] - (area.ls[0]-area.le[0])/2,
                     area.ls[1] - (area.ls[1]-area.pp[1])/2),
                 ha="center",
@@ -714,7 +715,8 @@ class QueueAquisition(Acquisition):
         :param meander: whether to scan every even-numbered row in reverse instead of jumping back to the row start (default False)
         
         """
-        
+
+        assert self.image_bounds, 'set_image_bounds must be called before generate_targets in queued acquisitions'
         origin = self.image_bounds[1] # Pixel indices will be relative to top-left
         self.targets = []
         
@@ -812,7 +814,7 @@ class EasyQueueAquisition(QueueAquisition):
         :param meander: scan each every-numbered row in reverse instead of jumping back to the row start (default False)
         
         """
-
+        assert self.image_bounds, 'set_image_bounds must be called before generate_targets in queued acquisitions'
         check_is_fitted(
             self.plane, 
             attributes="coef_", 
