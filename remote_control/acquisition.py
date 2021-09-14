@@ -1,3 +1,4 @@
+import sys
 from datetime import datetime
 from functools import wraps
 from inspect import getcallargs
@@ -5,6 +6,7 @@ from pathlib import Path
 import json
 from traceback import format_exc
 
+import matplotlib
 import numpy as np
 from IPython.display import display
 from scipy import interpolate
@@ -856,3 +858,7 @@ class EasyQueueAquisition(QueueAquisition):
             
             area.targets = area_targets
             self.targets.extend(area_targets)
+
+
+if (matplotlib.get_backend() or '').endswith('inline'):
+    print('WARNING: Using "%matplotlib inline" disables interactivity. Use "%matplotlib widget" or "%matplotlib notebook" instead.', file=sys.stderr)
