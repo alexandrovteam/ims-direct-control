@@ -4,6 +4,8 @@ from traceback import print_exc
 
 
 def send_email(config, email_address, subject, body, attachments=None):
+    if email_address is None or email_address == 'None':
+        return
     try:
         smtp_config = config.get('smtp', {})
         username = smtp_config.get('username')
