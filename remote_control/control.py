@@ -162,6 +162,12 @@ def get_position(autofocus=False, reset_light_to=100):
         flush_output_buffer()
         sendline('GetPos')
         coord_line = readline()
+        # On the newer version of APS Maldi control I observed
+        # that the command that has been sent is echoed back.
+        # If we observe an echoed line, read another line to get
+        # the data
+        if coord_line.startswith('GetPos'):
+            coord_line = readline()
         coord_strs = coord_line.strip().replace(';OK','').split(';')
         coords = tuple(map(float, coord_strs))
 
