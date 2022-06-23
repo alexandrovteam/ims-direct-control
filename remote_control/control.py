@@ -34,7 +34,9 @@ class ExpectException(Exception):
 
 def expect(expected, timeout=30):
     if isinstance(expected, str):
-        expected = [expected.encode()]
+        expected = [expected] 
+    if isinstance(expected, list):
+        expected = [item.encode() for item in expected if isinstance(item,str)]
     idx, match, data = telnet.expect(expected, timeout)
     data = str(data, 'utf-8')
     logfile.write(datetime.now().isoformat() + ': ' + data + '\r\n')
@@ -96,9 +98,9 @@ def initialise_and_login(config):
             telnet = Telnet(config['host'])
 
             try:
-                expect('Benutzername:')
+                expect(['Benutzername:', 'User:'])
                 sendline(config['user'])
-                expect('Passwort:')
+                expect(['Passwort:', 'Password'])
                 sendline(config['password'])
                 result = readline()
 
