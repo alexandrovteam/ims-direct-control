@@ -100,7 +100,7 @@ def initialise_and_login(config):
             try:
                 expect(['Benutzername:', 'User:'])
                 sendline(config['user'])
-                expect(['Passwort:', 'Password'])
+                expect(['Passwort:', 'Password:'])
                 sendline(config['password'])
                 result = readline()
 
