@@ -34,7 +34,9 @@ class ExpectException(Exception):
 
 def expect(expected, timeout=30):
     if isinstance(expected, str):
-        expected = [expected.encode()]
+        expected = [expected] 
+    if isinstance(expected, list):
+        expected = [item.encode() for item in expected if isinstance(item, str)]
     idx, match, data = telnet.expect(expected, timeout)
     data = str(data, 'utf-8')
     logfile.write(datetime.now().isoformat() + ': ' + data + '\r\n')
@@ -96,9 +98,9 @@ def initialise_and_login(config):
             telnet = Telnet(config['host'])
 
             try:
-                expect('Benutzername:')
+                expect(['Benutzername:', 'User:'])
                 sendline(config['user'])
-                expect('Passwort:')
+                expect(['Passwort:', 'Password:'])
                 sendline(config['password'])
                 result = readline()
 
@@ -160,6 +162,12 @@ def get_position(autofocus=False, reset_light_to=100):
         flush_output_buffer()
         sendline('GetPos')
         coord_line = readline()
+        # On the newer version of APS Maldi control I observed
+        # that the command that has been sent is echoed back.
+        # If we observe an echoed line, read another line to get
+        # the data
+        if coord_line.startswith('GetPos'):
+            coord_line = readline()
         coord_strs = coord_line.strip().replace(';OK','').split(';')
         coords = tuple(map(float, coord_strs))
 
