@@ -36,7 +36,7 @@ def expect(expected, timeout=30):
     if isinstance(expected, str):
         expected = [expected] 
     if isinstance(expected, list):
-        expected = [item.encode() for item in expected if isinstance(item,str)]
+        expected = [item.encode() for item in expected if isinstance(item, str)]
     idx, match, data = telnet.expect(expected, timeout)
     data = str(data, 'utf-8')
     logfile.write(datetime.now().isoformat() + ': ' + data + '\r\n')
