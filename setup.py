@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 from remote_control import __version__
 
-setup(name='remote_control',
+setup(name='ims_direct_control',
       version=__version__,
       description='Python library for controlling the TransMIT APS-MALDI source remotely',
       url='',
